@@ -44,7 +44,10 @@
     "README.md",
     "LICENSE"
   ],
-  "author": "Gavania",
+  "author": {
+    "name": "Gavania",
+    "email": "jinling114@outlook.com"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -168,7 +171,9 @@
         }
       ],
       "category": "Education",
+      "desktopName": "blackbox",
       "executableName": "blackbox",
+      "syncDesktopName": true,
       "synopsis": "BlackboardChina course-material downloader",
       "description": "Blackbox is a BlackboardChina course-material downloader."
     },
