@@ -2,7 +2,7 @@
 
 declare global {
   interface Window {
-    whiteboardGui: {
+    blackboxGui: {
       getVersion: () => Promise<string>;
       loadConfig: () => Promise<Record<string, unknown>>;
       saveSetup: (payload: Record<string, unknown>) => Promise<{ ok: boolean }>;
@@ -30,8 +30,11 @@ declare global {
       getPaths: () => Promise<{ downloads: string; logs: string; summary: string }>;
       openDownloads: () => Promise<string>;
       openLogs: () => Promise<string>;
+      chooseDownloadDirectory: () => Promise<string | null>;
       getAgentStatus: () => Promise<Record<string, unknown>>;
       syncAgent: (payload?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      installCodexSkill: () => Promise<Record<string, unknown>>;
+      removeCodexSkill: () => Promise<Record<string, unknown>>;
       getUpdateState: () => Promise<Record<string, unknown>>;
       checkForUpdates: () => Promise<Record<string, unknown>>;
       downloadUpdate: () => Promise<Record<string, unknown>>;

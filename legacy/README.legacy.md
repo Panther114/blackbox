@@ -1,8 +1,8 @@
 
 **Es lebe der Arbeiterklasse! 工人阶级万岁! Long Live the Working Class!**
-# Whiteboard Downloader
-Whiteboard is
-a Python-based automation tool to download course materials from **SHSID Blackboard China**. \
+# Blackbox
+Blackbox is
+a Python-based automation tool to download course materials from **SHSID Blackboard**. \
  Using a variety of python modules, mostly selenium and requests, this project greatly saves time and effort during the preserving of course materials, and lays as the foundation for furthur, scaled extraction of data from **Blackboard**.
 
 ---
@@ -23,7 +23,7 @@ a Python-based automation tool to download course materials from **SHSID Blackbo
 
 ## Overview
 
-This tool automates downloading materials from Blackboard China. It uses:
+This tool automates downloading materials from Blackboard. It uses:
 
 - `requests` and `urllib3` for HTTP requests.  
 - `selenium` for browser automation where required.  
@@ -71,7 +71,7 @@ Note: Through numerous tests we infered that the latest versions of `requests` a
 4. **Chrome Browser & ChromeDriver**:
 
    * Latest verion of Chrome Browser (Version 140.0.7339.81) in the default installation location. You can verify this by going to Chrome --> Settings --> About Chrome.
-   * Chromedriver-win64 folder, placed in the exact same directory as the `whiteboard_download_V.0.3.6.py`.
+   * Chromedriver-win64 folder, placed in the exact same directory as the `blackbox_download_V.0.3.6.py`.
    * Immediately inside the ChromeDriver folder should contain the `chromedriver.exe` and two other files. A common mistake when unzipping the `chromedriver-win64` folder is having an additional layer of folder.
 Note: The customization of `Chrome`/`Chromedriver` Path in the code is an upcoming feature. For those familiar with python, you can also edit it through lines 87-88 (for V.0.3.6): 
    ```bash
@@ -91,7 +91,7 @@ You can do this by downloading the project as a .zip:
 \
 This is equivalent to copying the following link in a browser tab:
    ```bash
-   https://github.com/Panther114/WhiteBoard-Downloader/archive/refs/heads/main.zip
+   https://github.com/Panther114/blackbox/archive/refs/heads/main.zip
    ```
 
 2. **Unzip the zip**
@@ -161,7 +161,7 @@ This is crucial. 75% of errors are due to connection issues.
 1. Run the main script: (preferbly with a debugger so you can send me the error msg if something goes wrong)
 
    ```bash
-   python     whiteboard_download_XXversioN.py
+   python     blackbox_download_XXversioN.py
    ```
 
 3. Enter your Gnumber and Password in the GUI pop-up.

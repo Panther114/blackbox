@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  whiteboard-downloader:
+  blackbox:
     build: .
-    container_name: whiteboard-downloader
+    container_name: blackbox
     environment:
       # Blackboard credentials
       - BB_USERNAME=${BB_USERNAME}
@@ -26,7 +26,7 @@ services:
       - ./logs:/app/logs
 
       # Persist database for resume capability
-      - ./whiteboard.db:/app/whiteboard.db
+      - ./blackbox.db:/app/blackbox.db
 
     # Remove container after completion
     restart: "no"

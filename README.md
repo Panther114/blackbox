@@ -1,4 +1,4 @@
-# BlackboardChina Downloader v1.0.0
+# Blackbox v1.0.0
 
 This application is provided solely for educational, personal, and technical purposes. By using this application, you acknowledge and agree that you are solely responsible for ensuring that your use complies with all applicable SHSID policies, platform terms, laws, and regulations.
 
@@ -32,8 +32,8 @@ See [README-USER.md](README-USER.md) for short student instructions.
 ## Developer path
 
 ```bash
-git clone https://github.com/Panther114/WhiteBoard-Downloader.git
-cd WhiteBoard-Downloader
+git clone https://github.com/Panther114/blackbox.git
+cd blackbox
 npm install
 npm run build
 npm start download
@@ -55,15 +55,30 @@ npm start download
 - `npm run gui:dev` – GUI development mode
 - `npm run build:gui` – build CLI + GUI bundles
 
+## Offline GUI screenshots
+
+Run `npm run gui:demo` to launch a local renderer demo that never contacts Blackboard. The renderer also accepts seeded `screen` states for screenshot and layout QA:
+
+```text
+http://127.0.0.1:5173/?demo=1&screen=course-list
+http://127.0.0.1:5173/?demo=1&screen=scan
+http://127.0.0.1:5173/?demo=1&screen=metadata
+http://127.0.0.1:5173/?demo=1&screen=files
+http://127.0.0.1:5173/?demo=1&screen=download
+http://127.0.0.1:5173/?demo=1&screen=diagnostics
+```
+
+The seeded states use local fixture data only. The normal download path remains network-backed and is not invoked by the demo.
+
 ## Agent and MCP integration
 
-The installed Windows application can use the credentials saved in its Setup screen. Configure an MCP client to start its installed executable with `--mcp`:
+The installed Windows application can use credentials saved in Settings. Configure an MCP client to start its installed executable with `--mcp`:
 
 ```json
 {
   "mcpServers": {
-    "blackboardchina": {
-      "command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\BlackboardChina Downloader\\BlackboardChina Downloader.exe",
+    "blackbox": {
+      "command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\Blackbox\\Blackbox.exe",
       "args": ["--mcp"]
     }
   }
@@ -73,8 +88,8 @@ The installed Windows application can use the credentials saved in its Setup scr
 For a portable CLI integration, configure `BB_USERNAME`, `BB_PASSWORD`, and `DOWNLOAD_DIR` in the MCP process environment (or a `.env` in its working directory), then use one of:
 
 ```bash
-npx --yes whiteboard-downloader@1.0.0 mcp
-bunx --bun whiteboard-downloader@1.0.0 mcp
+npx --yes blackbox@1.0.0 mcp
+bunx --bun blackbox@1.0.0 mcp
 ```
 
 The MCP tools are read-only: `blackboard_status`, `blackboard_list_courses`, `blackboard_sync`, and `blackboard_get_item`. `blackboard_sync` exports Markdown plus a manifest; set `include_files` only when attachments are needed.
@@ -100,8 +115,8 @@ Extension normalization behavior:
 
 After each run:
 - Text summary: `logs/latest-summary.txt`
-- JSON summary: `<DOWNLOAD_DIR>/whiteboard-run-report.json`
-- Main logs: `logs/whiteboard.log`
+- JSON summary: `<DOWNLOAD_DIR>/blackbox-run-report.json`
+- Main logs: `logs/blackbox.log`
 
 ## Troubleshooting
 

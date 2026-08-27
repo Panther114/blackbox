@@ -11,7 +11,7 @@ function includesAny(haystack: string, needles: string[]): boolean {
   return needles.some(n => haystack.includes(n));
 }
 
-export function mapToUserError(error: unknown, logsPath = './logs/whiteboard.log'): UserErrorInfo {
+export function mapToUserError(error: unknown, logsPath = './logs/blackbox.log'): UserErrorInfo {
   const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error || 'Unknown error');
   const text = raw.toLowerCase();
 
@@ -46,7 +46,7 @@ export function mapToUserError(error: unknown, logsPath = './logs/whiteboard.log
     return {
       whatHappened: 'Blackboard login failed.',
       likelyCause: 'Credentials are incorrect, expired, or blocked by Blackboard verification.',
-      nextAction: 'Run: whiteboard-dl setup --reset and verify your Blackboard username/password.',
+      nextAction: 'Run: blackbox setup --reset and verify your Blackboard username/password.',
       logsLocation: path.resolve(logsPath),
     };
   }
@@ -109,7 +109,7 @@ export function mapToUserError(error: unknown, logsPath = './logs/whiteboard.log
     return {
       whatHappened: 'Configuration in .env is missing or invalid.',
       likelyCause: 'Credentials or required settings are empty/placeholders.',
-      nextAction: 'Run: whiteboard-dl setup --reset to recreate config.',
+      nextAction: 'Run: blackbox setup --reset to recreate config.',
       logsLocation: path.resolve(logsPath),
     };
   }
@@ -117,7 +117,7 @@ export function mapToUserError(error: unknown, logsPath = './logs/whiteboard.log
   return {
     whatHappened: 'The downloader encountered an unexpected error.',
     likelyCause: 'A runtime error occurred while running this command.',
-    nextAction: 'Run the setup/start file again. If it still fails, run whiteboard-dl doctor and share logs.',
+    nextAction: 'Run the setup/start file again. If it still fails, run blackbox doctor and share logs.',
     logsLocation: path.resolve(logsPath),
   };
 }

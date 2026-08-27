@@ -24,9 +24,12 @@ const api = {
     ipcRenderer.invoke('paths:get'),
   openDownloads: (): Promise<string> => ipcRenderer.invoke('path:open-downloads'),
   openLogs: (): Promise<string> => ipcRenderer.invoke('path:open-logs'),
+  chooseDownloadDirectory: (): Promise<string | null> => ipcRenderer.invoke('path:choose-download-directory'),
   getAgentStatus: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('agent:status'),
   syncAgent: (payload?: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('agent:sync', payload || {}),
+  installCodexSkill: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('agent:codex-install'),
+  removeCodexSkill: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('agent:codex-remove'),
   getUpdateState: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('update:get-state'),
   checkForUpdates: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('update:check'),
   downloadUpdate: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('update:download'),
@@ -38,5 +41,5 @@ const api = {
   },
 };
 
-contextBridge.exposeInMainWorld('whiteboardGui', api);
+contextBridge.exposeInMainWorld('blackboxGui', api);
 

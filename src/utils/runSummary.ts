@@ -48,7 +48,7 @@ export function writeRunSummary(report: RunSummaryReport): void {
 
   fs.writeFileSync(latestSummaryPath, lines.join('\n') + '\n', 'utf-8');
 
-  const reportJsonPath = path.resolve(report.downloadDir, 'whiteboard-run-report.json');
+  const reportJsonPath = path.resolve(report.downloadDir, 'blackbox-run-report.json');
   fs.mkdirSync(path.dirname(reportJsonPath), { recursive: true });
   fs.writeFileSync(
     reportJsonPath,

@@ -112,6 +112,6 @@ Then rerun launcher.
 
 ## How to find logs
 
-- Main log: `logs/whiteboard.log`
+- Main log: `logs/blackbox.log`
 - Latest run summary: `logs/latest-summary.txt`
-- JSON run report: `<DOWNLOAD_DIR>/whiteboard-run-report.json`
+- JSON run report: `<DOWNLOAD_DIR>/blackbox-run-report.json`

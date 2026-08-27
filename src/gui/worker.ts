@@ -23,7 +23,7 @@ let runState = {
 };
 let runSummaryContext = {
   startedAt: new Date().toISOString(),
-  logFilePath: './logs/whiteboard.log',
+  logFilePath: './logs/blackbox.log',
   downloadDir: './downloads',
 };
 let stdinBuffer = '';
@@ -108,7 +108,7 @@ async function startWorkflow(payload: WorkerCommandMap['startWorkflow'] = {}): P
   const hasUsername = typeof config.username === 'string' && config.username.trim() !== '';
   const hasPassword = typeof config.password === 'string' && config.password.trim() !== '';
   if (!hasUsername || !hasPassword) {
-    throw new Error('Blackboard credentials are missing. Open Setup and save your username/password.');
+    throw new Error('Blackboard credentials are missing. Open Credentials and save your username/password.');
   }
 
   runSummaryContext = {
@@ -124,7 +124,10 @@ async function startWorkflow(payload: WorkerCommandMap['startWorkflow'] = {}): P
     'login:failure',
     'courses:discovered',
     'files:discovery:start',
+    'files:discovery:progress',
     'files:discovery:complete',
+    'files:metadata:progress',
+    'files:metadata:complete',
     'files:ready',
     'download:start',
     'download:progress',

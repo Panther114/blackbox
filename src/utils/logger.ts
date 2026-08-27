@@ -10,7 +10,7 @@ const MAX_LOG_FILES = 3;
 /**
  * Minimal console-only logger used before `initLogger()` is called.
  * This prevents a hard throw if any module emits a log at import time or
- * before the `WhiteboardDownloader` constructor runs.
+ * before the `BlackboxDownloader` constructor runs.
  */
 let logger: winston.Logger = winston.createLogger({
   level: 'info',
@@ -24,7 +24,7 @@ let logger: winston.Logger = winston.createLogger({
 /**
  * Initialize logger with configuration.
  * The file transport uses built-in size-based rotation so that
- * `whiteboard.log` doesn't grow indefinitely.
+ * `blackbox.log` doesn't grow indefinitely.
  */
 export function initLogger(logLevel: string, logFile: string): winston.Logger {
   // Ensure log directory exists

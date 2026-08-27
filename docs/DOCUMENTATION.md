@@ -54,4 +54,4 @@
 - Friendly error mapping: `src/utils/userErrors.ts`
 - Run summary files:
   - `logs/latest-summary.txt`
-  - `<DOWNLOAD_DIR>/whiteboard-run-report.json`
+  - `<DOWNLOAD_DIR>/blackbox-run-report.json`

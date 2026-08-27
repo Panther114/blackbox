@@ -105,6 +105,13 @@ export class FileDownloader extends EventEmitter {
    */
   async fetchMetadata(files: DiscoveredFile[]): Promise<DiscoveredFile[]> {
     const headLimit = pLimit(this.config.maxConcurrentDownloads);
+    let completed = 0;
+    this.emit('files:metadata:progress', {
+      phase: 'metadata',
+      completed: 0,
+      total: files.length,
+      currentFile: '',
+    });
 
     const results = await Promise.all(
       files.map(file =>
@@ -171,13 +178,28 @@ export class FileDownloader extends EventEmitter {
           } catch {
             // HEAD not supported or network error — return file as-is.
             return file;
+          } finally {
+            completed += 1;
+            this.emit('files:metadata:progress', {
+              phase: 'metadata',
+              completed,
+              total: files.length,
+              currentFile: file.name,
+            });
           }
         })
       )
     );
 
     // Filter out null entries (blocked media files)
-    return results.filter((f): f is DiscoveredFile => f !== null);
+    const filtered = results.filter((f): f is DiscoveredFile => f !== null);
+    this.emit('files:metadata:complete', {
+      phase: 'metadata',
+      completed: files.length,
+      total: files.length,
+      accepted: filtered.length,
+    });
+    return filtered;
   }
 
   // ---------------------------------------------------------------------------

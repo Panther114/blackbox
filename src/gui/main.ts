@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
-import { app, BrowserWindow, ipcMain, shell, IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell, IpcMainInvokeEvent } from 'electron';
 import { compactConfigOverrides, getConfig } from '../config';
 import { BlackboardAuth } from '../auth';
 import {
@@ -57,6 +57,10 @@ function isDevGui(): boolean {
   return process.argv.includes('--dev');
 }
 
+function isDemoGui(): boolean {
+  return process.argv.includes('--demo');
+}
+
 function appVersion(): string { return app.getVersion(); }
 
 function appIconPath(): string {
@@ -86,7 +90,7 @@ function createWindow(): void {
     height: 820,
     minWidth: 980,
     minHeight: 680,
-    title: `BlackboardChina Downloader v${appVersion()}`,
+    title: `Blackbox v${appVersion()}`,
     icon: appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -98,9 +102,11 @@ function createWindow(): void {
   });
 
   if (isDevGui()) {
-    mainWindow.loadURL('http://127.0.0.1:5173');
+    mainWindow.loadURL(`http://127.0.0.1:5173${isDemoGui() ? '/?demo=1' : ''}`);
   } else {
-    mainWindow.loadFile(path.resolve(__dirname, 'renderer/index.html'));
+    mainWindow.loadFile(path.resolve(__dirname, 'renderer/index.html'), {
+      query: isDemoGui() ? { demo: '1' } : undefined,
+    });
   }
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
@@ -116,7 +122,15 @@ function isNativeModuleAbiError(message: string): boolean {
 }
 
 function normalizeWorkerError(message: string): string {
-  const trimmed = message.trim();
+  const trimmed = message
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .trim();
+  if (/No automation browser is available|Executable doesn't exist|Looks like Playwright was just installed|playwright.*browser.*(missing|not installed)/i.test(trimmed)) {
+    return 'No automation browser is installed. Install Microsoft Edge or Playwright Chromium, then retry.';
+  }
+  if (/page\.goto:\s*Timeout|navigation timeout|Timeout \d+ms exceeded.*waiting until "commit"|ERR_CONNECTION_(REFUSED|TIMED_OUT|RESET)|ERR_NAME_NOT_RESOLVED|ENETUNREACH|ECONNREFUSED|ETIMEDOUT/i.test(trimmed)) {
+    return 'Blackboard did not respond while opening the login page. Check your connection or VPN, then retry.';
+  }
   if (isNativeModuleAbiError(trimmed)) {
     return `${WORKER_NATIVE_MODULE_ERROR}\nOriginal error: ${trimmed}`;
   }
@@ -307,8 +321,24 @@ async function stopGuiWorker(): Promise<void> {
 
 async function runDoctor(loginTest: boolean): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
-  const add = (status: DoctorCheck['status'], message: string, required = true) =>
+  const total = loginTest ? 11 : 10;
+  let completed = 0;
+  const emitProgress = (current: string, running = true) => {
+    sendWorkflowEvent('diagnostics:progress', {
+      running,
+      completed,
+      total,
+      current,
+      loginTest,
+    });
+  };
+  const add = (status: DoctorCheck['status'], message: string, required = true) => {
     checks.push({ status, message, required });
+    completed += 1;
+    emitProgress(message);
+  };
+
+  emitProgress(loginTest ? 'Starting environment and login checks...' : 'Starting environment checks...');
 
   add('pass', `Packaged Electron runtime available (${process.versions.electron || process.version})`);
 
@@ -356,7 +386,9 @@ async function runDoctor(loginTest: boolean): Promise<DoctorCheck[]> {
 
   const baseUrl = config.baseUrl;
   const loginUrl = config.loginUrl;
+  emitProgress('Checking Blackboard base URL...');
   const baseReachable = await checkUrlReachable(baseUrl);
+  emitProgress('Checking Blackboard login URL...');
   const loginReachable = await checkUrlReachable(loginUrl);
   add(
     baseReachable ? 'pass' : 'warn',
@@ -375,6 +407,7 @@ async function runDoctor(loginTest: boolean): Promise<DoctorCheck[]> {
     } else {
       let auth: BlackboardAuth | null = null;
       try {
+        emitProgress('Running Blackboard login test...');
         const cfg = getConfig({ headless: true });
         auth = new BlackboardAuth(cfg);
         await auth.launchBrowser();
@@ -388,11 +421,12 @@ async function runDoctor(loginTest: boolean): Promise<DoctorCheck[]> {
     }
   }
 
+  emitProgress('Diagnostics complete', false);
   return checks;
 }
 
 app.whenReady().then(async () => {
-  app.setAppUserModelId('com.panther114.blackboardchina.downloader');
+  app.setAppUserModelId('com.panther114.blackbox');
   const appPaths = ensureAppPaths();
   desktopStore = new SecureDesktopStore(appPaths);
   await desktopStore.migrateLegacySettings();
@@ -414,9 +448,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('config:load', async event => {
     assertTrustedSender(event);
     const settings = desktopStore.loadSettings();
+    const password = await desktopStore.getPassword();
     return {
-      hasCredentials: Boolean(settings.username && await desktopStore.getPassword()),
+      hasCredentials: Boolean(settings.username && password),
       username: settings.username,
+      password,
       downloadDir: settings.downloadDir,
       headless: settings.headless,
       courseFilter: settings.courseFilter,
@@ -526,6 +562,18 @@ app.whenReady().then(async () => {
     return shell.openPath(path.resolve(path.dirname(config.logFile)));
   });
 
+  ipcMain.handle('path:choose-download-directory', async event => {
+    assertTrustedSender(event);
+    const current = desktopStore.loadSettings().downloadDir;
+    const options = {
+      defaultPath: path.resolve(current),
+      properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
+      title: 'Choose download directory',
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0] || null;
+  });
+
   ipcMain.handle('agent:status', async event => {
     assertTrustedSender(event);
     return agentService.status();
@@ -538,6 +586,14 @@ app.whenReady().then(async () => {
       includeInstructions: payload?.includeInstructions !== false,
       outputDir: typeof payload?.outputDir === 'string' ? payload.outputDir : undefined,
     });
+  });
+  ipcMain.handle('agent:codex-install', event => {
+    assertTrustedSender(event);
+    return agentService.installCodexSkill();
+  });
+  ipcMain.handle('agent:codex-remove', event => {
+    assertTrustedSender(event);
+    return agentService.removeCodexSkill();
   });
   ipcMain.handle('update:get-state', event => { assertTrustedSender(event); return getUpdateState(); });
   ipcMain.handle('update:check', async event => { assertTrustedSender(event); return checkForUpdates(); });

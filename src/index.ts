@@ -13,7 +13,7 @@ import { stableId } from './agent/markdown';
 /** Maximum folder-nesting depth before recursion is aborted. */
 const MAX_DISCOVER_DEPTH = 10;
 
-export class WhiteboardDownloader extends EventEmitter {
+export class BlackboxDownloader extends EventEmitter {
   private config: Config;
   private auth: BlackboardAuth;
   private scraper: BlackboardScraper | null = null;
@@ -59,7 +59,7 @@ export class WhiteboardDownloader extends EventEmitter {
    * Initialize and authenticate
    */
   async initialize(): Promise<void> {
-    log.info('Initializing BlackboardChina Downloader...');
+    log.info('Initializing Blackbox...');
 
     await this.auth.launchBrowser();
     await this.auth.login();
@@ -70,12 +70,14 @@ export class WhiteboardDownloader extends EventEmitter {
     this.scraper = new BlackboardScraper(page, this.config);
     this.downloader = new FileDownloader(this.config, cookies, this.db, this.fileTree);
 
-    // Forward FileDownloader events to WhiteboardDownloader
+    // Forward FileDownloader events to BlackboxDownloader
     this.downloader.on('download:start', (data) => this.emit('download:start', data));
     this.downloader.on('download:progress', (data) => this.emit('download:progress', data));
     this.downloader.on('download:complete', (data) => this.emit('download:complete', data));
     this.downloader.on('download:error', (data) => this.emit('download:error', data));
     this.downloader.on('download:skip', (data) => this.emit('download:skip', data));
+    this.downloader.on('files:metadata:progress', (data) => this.emit('files:metadata:progress', data));
+    this.downloader.on('files:metadata:complete', (data) => this.emit('files:metadata:complete', data));
 
     log.info('Initialization complete');
   }
@@ -121,8 +123,17 @@ export class WhiteboardDownloader extends EventEmitter {
     log.info(`Discovering files in ${resolvedCourses.length} courses...`);
 
     const allFiles: DiscoveredFile[] = [];
+    this.emit('files:discovery:progress', {
+      phase: 'courses',
+      completed: 0,
+      total: resolvedCourses.length,
+      currentCourse: '',
+      currentSection: '',
+      filesFound: 0,
+    });
 
-    for (const course of resolvedCourses) {
+    for (let courseIndex = 0; courseIndex < resolvedCourses.length; courseIndex += 1) {
+      const course = resolvedCourses[courseIndex];
       log.info(`${'='.repeat(60)}`);
       log.info(`Discovering course: ${course.name}`);
       log.info('='.repeat(60));
@@ -132,9 +143,26 @@ export class WhiteboardDownloader extends EventEmitter {
 
       try {
         const sidebarLinks = await this.scraper.getSidebarLinks(course.url);
+        this.emit('files:discovery:progress', {
+          phase: 'courses',
+          completed: courseIndex,
+          total: resolvedCourses.length,
+          currentCourse: course.name,
+          currentSection: '',
+          filesFound: allFiles.length,
+        });
 
-        for (const link of sidebarLinks) {
+        for (let sectionIndex = 0; sectionIndex < sidebarLinks.length; sectionIndex += 1) {
+          const link = sidebarLinks[sectionIndex];
           log.info(`  Scanning section: ${link.title}`);
+          this.emit('files:discovery:progress', {
+            phase: 'courses',
+            completed: courseIndex,
+            total: resolvedCourses.length,
+            currentCourse: course.name,
+            currentSection: link.title,
+            filesFound: allFiles.length,
+          });
 
           const sectionPath = path.join(coursePath, link.path);
           ensureDirectory(sectionPath);
@@ -160,6 +188,15 @@ export class WhiteboardDownloader extends EventEmitter {
       } catch (error: any) {
         log.error(`Failed to discover course ${course.name}: ${error.message}`);
       }
+
+      this.emit('files:discovery:progress', {
+        phase: 'courses',
+        completed: courseIndex + 1,
+        total: resolvedCourses.length,
+        currentCourse: course.name,
+        currentSection: '',
+        filesFound: allFiles.length,
+      });
     }
 
     log.info(`Discovery complete — found ${allFiles.length} files total`);

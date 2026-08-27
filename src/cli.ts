@@ -93,14 +93,14 @@ agent
 
 program
   .command('mcp')
-  .description('Start the BlackboardChina MCP server on stdio')
+  .description('Start the Blackbox MCP server on stdio')
   .action(async () => {
     await startMcpServer();
   });
 
 program
-  .name('whiteboard-dl')
-  .description('Modern automation tool to download course materials from SHSID Blackboard China')
+  .name('blackbox')
+  .description('Modern automation tool to download course materials from SHSID Blackboard')
   .version('1.0.0');
 
 function isDebugMode(): boolean {
@@ -157,7 +157,7 @@ program
   .option('--test-login', 'Test Blackboard login immediately after saving setup')
   .action(async options => {
     try {
-      console.log(chalk.bold.cyan('\n🛠️  BlackboardChina Downloader — Setup Wizard\n'));
+      console.log(chalk.bold.cyan('\n🛠️  Blackbox — Setup Wizard\n'));
 
       const envPath = path.resolve('.env');
       const existing = options.reset ? {} : readEnvFile(envPath);
@@ -241,7 +241,7 @@ program
           console.log(chalk.yellow('1) Verify username/G-number and password.'));
           console.log(chalk.yellow('2) Try HEADLESS=false in setup so you can watch the login flow.'));
           console.log(chalk.yellow('3) Check your network and Blackboard availability.'));
-          handleUserFacingError(error, './logs/whiteboard.log');
+          handleUserFacingError(error, './logs/blackbox.log');
           process.exitCode = 1;
           return;
         } finally {
@@ -252,7 +252,7 @@ program
       console.log(chalk.bold.green('\n✅ Setup complete!\n'));
       console.log(chalk.white('Use the start script again to launch downloads.\n'));
     } catch (error) {
-      handleUserFacingError(error, './logs/whiteboard.log');
+      handleUserFacingError(error, './logs/blackbox.log');
       process.exitCode = 1;
       return;
     }
@@ -278,7 +278,7 @@ program
       process.exit(0);
     } catch (error) {
       if (!options.quiet) {
-        handleUserFacingError(error, './logs/whiteboard.log');
+        handleUserFacingError(error, './logs/blackbox.log');
       }
       process.exit(1);
     }
@@ -346,8 +346,8 @@ program
       const env = envStatus.env;
       const cfgForPaths = {
         downloadDir: env.DOWNLOAD_DIR || './downloads',
-        logFile: env.LOG_FILE || './logs/whiteboard.log',
-        databasePath: env.DATABASE_PATH || './whiteboard.db',
+        logFile: env.LOG_FILE || './logs/blackbox.log',
+        databasePath: env.DATABASE_PATH || './blackbox.db',
       };
 
       const { downloadDir, logDir, dbDir } = {
@@ -418,7 +418,7 @@ program
       const hasRequiredFailure = checks.some(c => c.required !== false && c.status === 'fail');
       process.exit(hasRequiredFailure ? 1 : 0);
     } catch (error) {
-      handleUserFacingError(error, './logs/whiteboard.log');
+      handleUserFacingError(error, './logs/blackbox.log');
       process.exitCode = 1;
       return;
     }
@@ -452,7 +452,7 @@ program
       filesSkipped: 0,
       filesFailed: 0,
       failedFiles: [] as Array<{ name: string; reason: string }>,
-      logFilePath: './logs/whiteboard.log',
+      logFilePath: './logs/blackbox.log',
       downloadDir: options.dir || './downloads',
       runError: undefined as string | undefined,
     };
@@ -460,7 +460,7 @@ program
     let workflow: DownloadWorkflow | null = null;
 
     try {
-      console.log(chalk.bold.cyan('\n🎓 BlackboardChina Downloader v1.0.0\n'));
+      console.log(chalk.bold.cyan('\n🎓 Blackbox v1.0.0\n'));
 
       let username = options.username;
       let password = options.password;
@@ -835,9 +835,9 @@ program
       });
 
       console.log(chalk.gray('─'.repeat(50)));
-      console.log(chalk.yellow('\n💡 Tip: Run "whiteboard-dl setup" to configure settings\n'));
+      console.log(chalk.yellow('\n💡 Tip: Run "blackbox setup" to configure settings\n'));
     } catch (error) {
-      handleUserFacingError(error, './logs/whiteboard.log');
+      handleUserFacingError(error, './logs/blackbox.log');
       process.exitCode = 1;
       return;
     }

@@ -1,5 +1,5 @@
 Write-Host "========================================"
-Write-Host "  BlackboardChina Downloader Launcher"
+Write-Host "  Blackbox Launcher"
 Write-Host "========================================"
 Write-Host ""
 Set-Location -Path $PSScriptRoot

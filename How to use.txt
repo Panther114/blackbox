@@ -5,7 +5,7 @@ The developer does not endorse, encourage, or authorize any misuse of this appli
 Simple Setup Guide (<5 min)
 
 1. Install node using the node-v20.11.1-x64-setup.msi (if mac, download from official site)
-2. Navigate to WhiteBoard-Downloader-main, click start-gui.bat (windows) or start-gui.sh (mac). Note that you will have to do this every time you open the app, but there will be no repeating package installations.
+2. Navigate to blackbox-main, click start-gui.bat (windows) or start-gui.sh (mac). Note that you will have to do this every time you open the app, but there will be no repeating package installations.
 3. Follow instructions, turn off VPN, package install + setup should be done in <2min
 4. The application would automatically run.
 

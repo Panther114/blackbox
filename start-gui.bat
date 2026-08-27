@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================
-echo   BlackboardChina Downloader GUI Launcher
+echo   Blackbox GUI Launcher
 echo ========================================
 echo.
 

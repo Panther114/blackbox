@@ -41,7 +41,7 @@ def get_user_input():
         result["closed"] = True
         root.destroy()
     root = tk.Tk()
-    root.title("Whiteboard " + version)
+    root.title("Blackbox " + version)
     root.configure(bg="#f0f0f0")
     root.geometry("400x220")
     root.resizable(False, False)

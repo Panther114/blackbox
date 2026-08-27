@@ -19,7 +19,7 @@ function errorResult(error: unknown) {
 
 export async function startMcpServer(): Promise<void> {
   const service = new AgentService();
-  const server = new McpServer({ name: 'blackboardchina-downloader', version: '1.0.0' });
+  const server = new McpServer({ name: 'blackbox', version: '1.0.0' });
 
   server.registerTool('blackboard_status', {
     description: 'Return local Blackboard downloader readiness. This tool never contacts Blackboard or changes data.',
@@ -73,7 +73,7 @@ export async function startMcpServer(): Promise<void> {
   });
 
   await server.connect(new StdioServerTransport());
-  console.error('BlackboardChina Downloader MCP server ready on stdio.');
+  console.error('Blackbox MCP server ready on stdio.');
 }
 
 if (require.main === module) {

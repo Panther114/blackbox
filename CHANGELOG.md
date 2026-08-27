@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Media file exclusion** — audio/video files (`mp4`, `mp3`, `mov`, `avi`, `mkv`, `wmv`, `webm`, `flv`, `wav`, `aac`, `ogg`, `m4a`, `m4v`) are blocked at both discovery time (by URL extension) and metadata time (by MIME type). They never appear in the download list.
 - **JSON file-tree cache** (`file_tree.json`) — mirrors Blackboard's course / section / folder hierarchy. Replaces the per-run `fs.existsSync` scan with O(1) in-memory lookups. The tree is updated after each successful download and saved atomically. On first run, the existing download directory is scanned to build the initial tree (migration path for existing users). Configurable via `FILE_TREE_PATH` in `.env`.
 - **`markAllPendingAsFailed()` in `DownloadDatabase`** — on startup, records stuck in `pending` status from a previous interrupted run are reset to `failed` so they appear in the retry queue.
-- **Log rotation** — the Winston file transport now rotates at 5 MB and keeps 3 rotated log files, preventing `whiteboard.log` from growing indefinitely.
+- **Log rotation** — the Winston file transport now rotates at 5 MB and keeps 3 rotated log files, preventing `blackbox.log` from growing indefinitely.
 
 ### Changed
 - **Scraping speed** — replaced `waitUntil: 'networkidle'` with `'domcontentloaded'` in `navigateTo()`, `goBack()`, and `returnToHome()`. Blackboard pages with analytics widgets can add 5–30 seconds of idle-wait; `domcontentloaded` eliminates this overhead.
@@ -68,8 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Course Selection GUI** — after logging in, all discovered course links are shown in an interactive Inquirer checkbox list (all pre-selected). The user unchecks unwanted courses before any scraping begins. The `--all` flag skips this GUI along with the file-selection GUI.
-- `WhiteboardDownloader.getCourses()` public method — exposes the course list so the CLI can present it before starting the full discovery pass.
-- `WhiteboardDownloader.discoverAllFiles(courses?)` now accepts an optional pre-filtered `Course[]` array; when omitted the method falls back to fetching all courses (backward-compatible).
+- `BlackboxDownloader.getCourses()` public method — exposes the course list so the CLI can present it before starting the full discovery pass.
+- `BlackboxDownloader.discoverAllFiles(courses?)` now accepts an optional pre-filtered `Course[]` array; when omitted the method falls back to fetching all courses (backward-compatible).
 
 ### Changed
 - `discoverAllFiles()` now accepts an optional `courses` parameter to skip re-fetching the course list when the caller already has it.
@@ -153,13 +153,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `download:complete` — file written, final size known
   - `download:error` — download failed
   - `download:skip` — file already in database, skipped
-- `WhiteboardDownloader` extends `EventEmitter` and re-emits all `FileDownloader` events, giving the CLI a single observable entry point
+- `BlackboxDownloader` extends `EventEmitter` and re-emits all `FileDownloader` events, giving the CLI a single observable entry point
 - The `download` command now renders a live multi-bar display showing:
   - Per-file progress bar, percentage, downloaded bytes, and total size
   - A summary table (completed / failed / skipped) on completion
 - The `ora` spinner is still used for the initialization phase (browser launch + login)
 
-#### Setup wizard (`whiteboard-dl setup` / `npm run setup`)
+#### Setup wizard (`blackbox setup` / `npm run setup`)
 - New `setup` CLI command guides users through first-time configuration interactively
 - Prompts for G-Number, password, download directory, and optional Playwright browser installation
 - Writes (or updates) a `.env` file — the single source of truth for credentials

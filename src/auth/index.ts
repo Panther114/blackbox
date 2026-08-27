@@ -1,11 +1,50 @@
+import fs from 'fs';
 import { chromium, firefox, webkit, Browser, BrowserContext, Page } from 'playwright-core';
 import { Config } from '../types';
 import { log } from '../utils/logger';
 
-function isTransientNavigationError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /ERR_ABORTED|frame was detached|target page, context or browser has been closed/i.test(message);
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
+
+const AUTOMATION_BROWSER_MISSING_ERROR =
+  'No automation browser is available. Install Microsoft Edge or Playwright Chromium, then retry.';
+
+function managedChromiumExecutable(): string | undefined {
+  try {
+    const executable = chromium.executablePath();
+    return executable && fs.existsSync(executable) ? executable : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function isNavigationTimeoutError(error: unknown): boolean {
+  return /page\.goto: Timeout \d+ms exceeded|navigation timeout/i.test(errorMessage(error));
+}
+
+export function isTransientNavigationError(error: unknown): boolean {
+  const message = errorMessage(error);
+  return /ERR_ABORTED|frame was detached|target page, context or browser has been closed|ERR_CONNECTION_(REFUSED|TIMED_OUT|RESET)|ERR_NAME_NOT_RESOLVED|ENETUNREACH|ECONNREFUSED|ETIMEDOUT/i.test(message) ||
+    isNavigationTimeoutError(error);
+}
+
+export function formatLoginNavigationError(error: unknown, loginUrl: string): string {
+  const message = errorMessage(error);
+  if (isNavigationTimeoutError(error)) {
+    return `Blackboard did not respond while opening the login page (${loginUrl}). The site may be unavailable or blocked by your network/VPN. Check your connection and retry.`;
+  }
+  if (/ERR_CONNECTION_REFUSED|ERR_CONNECTION_TIMED_OUT|ERR_NAME_NOT_RESOLVED|ENETUNREACH|ECONNREFUSED|ETIMEDOUT/i.test(message)) {
+    return `Blackboard could not be reached at ${loginUrl}. Check your connection and VPN, then retry.`;
+  }
+  if (/ERR_ABORTED|frame was detached|target page, context or browser has been closed/i.test(message)) {
+    return `The Blackboard login page changed before it finished loading. Retry the download.`;
+  }
+  return `Could not open the Blackboard login page at ${loginUrl}. Check your connection and retry.`;
+}
+
+const LOGIN_NAVIGATION_TIMEOUT = 15000;
+const LOGIN_FORM_TIMEOUT = 6000;
 
 export class BlackboardAuth {
   private browser: Browser | null = null;
@@ -27,21 +66,25 @@ export class BlackboardAuth {
       // redirect, which can surface as net::ERR_ABORTED in Playwright.
       await this.page.goto(this.config.loginUrl, {
         waitUntil: 'commit',
-        timeout: this.config.browserTimeout,
+        timeout: Math.min(this.config.browserTimeout, LOGIN_NAVIGATION_TIMEOUT),
       });
     } catch (error) {
       if (!isTransientNavigationError(error)) throw error;
       navigationError = error;
-      log.warn('Blackboard replaced the login document during navigation; waiting for the resulting page.');
+      log.warn(
+        isNavigationTimeoutError(error)
+          ? 'Blackboard login navigation timed out; checking whether the login form loaded anyway.'
+          : 'Blackboard replaced the login document during navigation; waiting for the resulting page.',
+      );
     }
 
     try {
       await this.page.waitForSelector('#user_id', {
         state: 'visible',
-        timeout: Math.min(this.config.browserTimeout, 10000),
+        timeout: Math.min(this.config.browserTimeout, LOGIN_FORM_TIMEOUT),
       });
     } catch (error) {
-      if (navigationError) throw navigationError;
+      if (navigationError) throw new Error(formatLoginNavigationError(navigationError, this.config.loginUrl));
       throw error;
     }
   }
@@ -59,10 +102,19 @@ export class BlackboardAuth {
       webkit,
     }[this.config.browserType];
 
+    const chromiumExecutable = this.config.browserType === 'chromium' ? managedChromiumExecutable() : undefined;
+    if (this.config.browserType === 'chromium' && !this.config.useSystemEdge && !chromiumExecutable) {
+      throw new Error(AUTOMATION_BROWSER_MISSING_ERROR);
+    }
+
     const launchOptions = {
       headless: this.config.headless,
       timeout: this.config.browserTimeout,
-      ...(this.config.browserType === 'chromium' && this.config.useSystemEdge ? { channel: 'msedge' } : {}),
+      ...(this.config.browserType === 'chromium' && this.config.useSystemEdge
+        ? { channel: 'msedge' }
+        : chromiumExecutable
+          ? { executablePath: chromiumExecutable }
+          : {}),
     };
     const contextOptions = {
       viewport: { width: 1920, height: 1080 } as const,
@@ -84,11 +136,21 @@ export class BlackboardAuth {
     } catch (error) {
       if (this.config.browserType !== 'chromium' || !this.config.useSystemEdge) throw error;
       log.warn('Microsoft Edge could not be launched; falling back to the managed Playwright Chromium.');
+      const fallbackExecutable = managedChromiumExecutable();
+      if (!fallbackExecutable) throw new Error(AUTOMATION_BROWSER_MISSING_ERROR);
       if (this.config.browserProfileDir) {
-        this.context = await chromium.launchPersistentContext(this.config.browserProfileDir, { ...contextOptions, headless: this.config.headless });
+        this.context = await chromium.launchPersistentContext(this.config.browserProfileDir, {
+          ...contextOptions,
+          headless: this.config.headless,
+          executablePath: fallbackExecutable,
+        });
         this.page = this.context.pages()[0] || await this.context.newPage();
       } else {
-        this.browser = await chromium.launch({ headless: this.config.headless, timeout: this.config.browserTimeout });
+        this.browser = await chromium.launch({
+          headless: this.config.headless,
+          timeout: this.config.browserTimeout,
+          executablePath: fallbackExecutable,
+        });
         this.context = await this.browser.newContext(contextOptions);
         this.page = await this.context.newPage();
       }

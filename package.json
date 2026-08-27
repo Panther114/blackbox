@@ -1,10 +1,10 @@
 {
-  "name": "whiteboard-downloader",
+  "name": "blackbox",
   "version": "1.0.0",
-  "description": "Desktop and agent-ready Blackboard China course-material downloader",
+  "description": "Desktop and agent-ready Blackbox course-material downloader",
   "main": "dist/gui/main.js",
   "bin": {
-    "whiteboard-dl": "./dist/cli.js"
+    "blackbox": "./dist/cli.js"
   },
   "scripts": {
     "bootstrap": "node scripts/bootstrap.js --mode=tui",
@@ -17,13 +17,14 @@
     "dev": "ts-node src/cli.ts",
     "gui": "electron dist/gui/main.js",
     "gui:dev": "npm run build && concurrently -k \"vite --config vite.gui.config.ts\" \"wait-on tcp:5173 && electron dist/gui/main.js --dev\"",
+    "gui:demo": "npm run build && concurrently -k \"vite --config vite.gui.config.ts\" \"wait-on tcp:5173 && electron dist/gui/main.js --dev --demo\"",
     "start": "node dist/cli.js",
     "setup": "node dist/cli.js setup",
     "test": "jest --runInBand",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
-    "docker:build": "docker build -t whiteboard-downloader .",
-    "docker:run": "docker run -it --rm -v $(pwd)/downloads:/app/downloads whiteboard-downloader",
+    "docker:build": "docker build -t blackbox .",
+    "docker:run": "docker run -it --rm -v $(pwd)/downloads:/app/downloads blackbox",
     "mcp": "node dist/mcp/server.js"
   },
   "keywords": [
@@ -93,9 +94,9 @@
     "npm": ">=8.0.0"
   },
   "build": {
-    "appId": "com.panther114.blackboardchina.downloader",
-    "productName": "BlackboardChina Downloader",
-    "artifactName": "BlackboardChina-Downloader-Setup-${version}-${arch}.${ext}",
+    "appId": "com.panther114.blackbox",
+    "productName": "Blackbox",
+    "artifactName": "Blackbox-Setup-${version}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
       "node_modules/better-sqlite3/**",
@@ -130,6 +131,6 @@
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false
     },
-    "publish": [{ "provider": "github", "owner": "Panther114", "repo": "BlackboardChina-downloader", "releaseType": "release" }]
+    "publish": [{ "provider": "github", "owner": "Panther114", "repo": "blackbox", "releaseType": "release" }]
   }
 }

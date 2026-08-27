@@ -52,8 +52,8 @@ RUN mkdir -p /app/downloads /app/logs
 # Set environment variables for container
 ENV NODE_ENV=production
 ENV DOWNLOAD_DIR=/app/downloads
-ENV LOG_FILE=/app/logs/whiteboard.log
-ENV DATABASE_PATH=/app/whiteboard.db
+ENV LOG_FILE=/app/logs/blackbox.log
+ENV DATABASE_PATH=/app/blackbox.db
 
 # Default command
 CMD ["node", "dist/cli.js", "download"]

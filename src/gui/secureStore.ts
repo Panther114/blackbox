@@ -14,11 +14,31 @@ export interface DesktopSettings {
 
 const defaults: DesktopSettings = {
   username: '',
-  downloadDir: path.join(process.env.USERPROFILE || '.', 'Downloads', 'BlackboardChina'),
+  downloadDir: path.join(process.env.USERPROFILE || '.', 'Downloads', 'Blackbox'),
   headless: true,
   courseFilter: '',
   autoCheckUpdates: true,
 };
+
+function legacyRoots(): string[] {
+  const roaming = process.env.APPDATA || process.env.XDG_CONFIG_HOME || '.';
+  const legacyBase = path.resolve(roaming, 'whiteboard-downloader');
+  return [path.join(legacyBase, 'data'), legacyBase];
+}
+
+function firstExistingFile(roots: string[], filename: string): string | null {
+  const root = roots.find(candidate => fs.existsSync(path.join(candidate, filename)));
+  return root ? path.join(root, filename) : null;
+}
+
+function copyIfMissing(source: string | null, target: string): void {
+  if (source && fs.existsSync(source) && !fs.existsSync(target)) fs.copyFileSync(source, target);
+}
+
+function copyDirectoryIfMissing(source: string | null, target: string): void {
+  if (!source || !fs.existsSync(source) || fs.existsSync(target)) return;
+  fs.cpSync(source, target, { recursive: true, force: false, errorOnExist: false });
+}
 
 export class SecureDesktopStore {
   constructor(private readonly paths: AppPaths) {}
@@ -62,18 +82,54 @@ export class SecureDesktopStore {
 
   async migrateLegacySettings(): Promise<{ migrated: boolean }> {
     if (fs.existsSync(this.paths.configFile)) return { migrated: false };
-    const legacy = path.join(process.env.APPDATA || '', 'whiteboard-downloader', '.env');
-    if (!legacy || !fs.existsSync(legacy)) return { migrated: false };
-    const env = readEnvFile(legacy);
-    this.saveSettings({
-      username: env.BB_USERNAME || '',
-      downloadDir: env.DOWNLOAD_DIR || defaults.downloadDir,
-      headless: env.HEADLESS !== 'false',
-      courseFilter: env.COURSE_FILTER || '',
-    });
-    if (env.BB_PASSWORD) await this.setPassword(env.BB_PASSWORD);
+    const roots = legacyRoots();
+    const legacySettings = firstExistingFile(roots, 'settings.json');
+    const legacyEnv = firstExistingFile(roots, '.env');
+    const legacyCredentials = firstExistingFile(roots, 'credentials.bin');
+    const legacyDatabase = firstExistingFile(roots, 'whiteboard.db');
+    const legacyFileTree = firstExistingFile(roots, 'file_tree.json');
+    const legacyExport = roots.map(root => path.join(root, 'agent-export')).find(candidate => fs.existsSync(candidate)) || null;
+    const legacyBrowserProfile = roots.map(root => path.join(root, 'browser-profile')).find(candidate => fs.existsSync(candidate)) || null;
+
+    if (!legacySettings && !legacyEnv && !legacyCredentials) return { migrated: false };
+
+    if (legacySettings) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(legacySettings, 'utf8')) as Partial<DesktopSettings>;
+        this.saveSettings({
+          username: typeof parsed.username === 'string' ? parsed.username : '',
+          downloadDir: typeof parsed.downloadDir === 'string' ? parsed.downloadDir : defaults.downloadDir,
+          headless: parsed.headless !== false,
+          courseFilter: typeof parsed.courseFilter === 'string' ? parsed.courseFilter : '',
+          autoCheckUpdates: parsed.autoCheckUpdates !== false,
+        });
+      } catch {
+        // Fall back to the legacy .env file below when settings.json is invalid.
+      }
+    }
+
+    if (!fs.existsSync(this.paths.configFile) && legacyEnv) {
+      const env = readEnvFile(legacyEnv);
+      this.saveSettings({
+        username: env.BB_USERNAME || '',
+        downloadDir: env.DOWNLOAD_DIR || defaults.downloadDir,
+        headless: env.HEADLESS !== 'false',
+        courseFilter: env.COURSE_FILTER || '',
+      });
+      if (env.BB_PASSWORD && !legacyCredentials) await this.setPassword(env.BB_PASSWORD);
+    }
+
+    copyIfMissing(legacyCredentials, this.paths.credentialsFile);
+    copyIfMissing(legacyDatabase, this.paths.databaseFile);
+    copyIfMissing(legacyFileTree, this.paths.fileTreeFile);
+    copyDirectoryIfMissing(legacyExport, this.paths.exportsDir);
+    copyDirectoryIfMissing(legacyBrowserProfile, this.paths.browserProfileDir);
+    if (legacyEnv && !fs.existsSync(this.paths.credentialsFile)) {
+      const env = readEnvFile(legacyEnv);
+      if (env.BB_PASSWORD) await this.setPassword(env.BB_PASSWORD);
+    }
     // Preserve a non-secret migration marker; legacy data is never deleted.
-    fs.writeFileSync(path.join(this.paths.root, 'migration-v1.json'), JSON.stringify({ migratedAt: new Date().toISOString(), source: legacy }) + '\n');
+    fs.writeFileSync(path.join(this.paths.root, 'migration-v1.json'), JSON.stringify({ migratedAt: new Date().toISOString(), source: legacySettings || legacyEnv || legacyCredentials }) + '\n');
     return { migrated: true };
   }
 
@@ -91,7 +147,7 @@ export class SecureDesktopStore {
       LOG_FILE: this.paths.logFile,
       BROWSER_PROFILE_DIR: this.paths.browserProfileDir,
       USE_SYSTEM_EDGE: 'true',
-      WHITEBOARD_APP_DATA_DIR: this.paths.root,
+      BLACKBOX_APP_DATA_DIR: this.paths.root,
     });
     return settings;
   }

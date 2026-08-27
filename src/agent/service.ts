@@ -1,8 +1,9 @@
 import path from 'path';
 import { getConfig } from '../config';
-import { WhiteboardDownloader } from '../index';
+import { BlackboxDownloader } from '../index';
 import { AgentAttachment, Course } from '../types';
 import { writeAgentExport } from './exporter';
+import { getCodexSkillStatus, installCodexSkill, removeCodexSkill } from './codexSkill';
 import { acquireWorkflowLock, getWorkflowLockStatus } from '../workflow/runLock';
 
 export interface AgentSyncOptions {
@@ -15,14 +16,28 @@ export interface AgentSyncOptions {
 export class AgentService {
   async status(): Promise<Record<string, unknown>> {
     const config = getConfig();
-    return { ...getWorkflowLockStatus(), configured: Boolean(config.username && config.password), downloadDir: path.resolve(config.downloadDir) };
+    return {
+      ...getWorkflowLockStatus(),
+      configured: Boolean(config.username && config.password),
+      downloadDir: path.resolve(config.downloadDir),
+      codexSkill: getCodexSkillStatus(),
+    };
+  }
+
+  installCodexSkill(): Record<string, unknown> {
+    const config = getConfig();
+    return { codexSkill: installCodexSkill(config.downloadDir) };
+  }
+
+  removeCodexSkill(): Record<string, unknown> {
+    return { codexSkill: removeCodexSkill() };
   }
 
   async listCourses(): Promise<Course[]> {
     const release = acquireWorkflowLock('agent:list-courses');
-    let downloader: WhiteboardDownloader | null = null;
+    let downloader: BlackboxDownloader | null = null;
     try {
-      downloader = new WhiteboardDownloader(getConfig());
+      downloader = new BlackboxDownloader(getConfig());
       await downloader.initialize();
       return await downloader.getCourses();
     } finally {
@@ -33,10 +48,10 @@ export class AgentService {
 
   async sync(options: AgentSyncOptions = {}): Promise<Record<string, unknown>> {
     const release = acquireWorkflowLock('agent:sync');
-    let downloader: WhiteboardDownloader | null = null;
+    let downloader: BlackboxDownloader | null = null;
     try {
       const config = getConfig();
-      downloader = new WhiteboardDownloader(config);
+      downloader = new BlackboxDownloader(config);
       await downloader.initialize();
       const allCourses = await downloader.getCourses();
       const courses = options.courseIds?.length

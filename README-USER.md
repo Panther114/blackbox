@@ -1,4 +1,4 @@
-# WhiteBoard Downloader (Student Quick Guide)
+# Blackbox (Student Quick Guide)
 
 ## First run
 
@@ -48,4 +48,4 @@ node dist/cli.js doctor --login
 
 ## If something fails
 
-Open `TROUBLESHOOTING.md` and share `logs/whiteboard.log` + `logs/latest-summary.txt` when asking for help.
+Open `TROUBLESHOOTING.md` and share `logs/blackbox.log` + `logs/latest-summary.txt` when asking for help.

@@ -29,7 +29,7 @@ describe('run summary writer', () => {
       filesSkipped: 3,
       filesFailed: 2,
       failedFiles: [{ name: 'bad.pdf', reason: 'network' }],
-      logFilePath: './logs/whiteboard.log',
+      logFilePath: './logs/blackbox.log',
       downloadDir,
       runError: 'partial failure',
     };
@@ -37,14 +37,14 @@ describe('run summary writer', () => {
     writeRunSummary(report);
 
     const summaryPath = path.join(tmpRoot, 'logs/latest-summary.txt');
-    const jsonPath = path.join(downloadDir, 'whiteboard-run-report.json');
+    const jsonPath = path.join(downloadDir, 'blackbox-run-report.json');
 
     expect(fs.existsSync(summaryPath)).toBe(true);
     expect(fs.existsSync(jsonPath)).toBe(true);
 
     const summaryText = fs.readFileSync(summaryPath, 'utf-8');
     expect(summaryText).toContain('startedAt: 2026-01-01T00:00:00.000Z');
-    expect(summaryText).toContain(`log file: ${path.resolve(tmpRoot, 'logs/whiteboard.log')}`);
+    expect(summaryText).toContain(`log file: ${path.resolve(tmpRoot, 'logs/blackbox.log')}`);
     expect(summaryText).toContain('run error: partial failure');
     expect(summaryText).toContain('- bad.pdf: network');
 
@@ -54,6 +54,6 @@ describe('run summary writer', () => {
     expect(json.filesFailed).toBe(2);
     expect(json.failedFiles).toEqual([{ name: 'bad.pdf', reason: 'network' }]);
     expect(json.runError).toBe('partial failure');
-    expect(json.logFilePath).toBe(path.resolve(tmpRoot, 'logs/whiteboard.log'));
+    expect(json.logFilePath).toBe(path.resolve(tmpRoot, 'logs/blackbox.log'));
   });
 });

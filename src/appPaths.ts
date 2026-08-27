@@ -3,7 +3,9 @@ import path from 'path';
 
 /**
  * Centralises writable paths so packaged builds never depend on their install
- * directory. CLI callers may set WHITEBOARD_APP_DATA_DIR for portable runs.
+ * directory. CLI callers may set BLACKBOX_APP_DATA_DIR for portable runs.
+ * The former WHITEBOARD_APP_DATA_DIR override remains a compatibility alias
+ * for existing portable installations.
  */
 export interface AppPaths {
   root: string;
@@ -19,7 +21,8 @@ export interface AppPaths {
 }
 
 export function getAppDataRoot(): string {
-  if (process.env.WHITEBOARD_APP_DATA_DIR) return path.resolve(process.env.WHITEBOARD_APP_DATA_DIR);
+  const portableOverride = process.env.BLACKBOX_APP_DATA_DIR || process.env.WHITEBOARD_APP_DATA_DIR;
+  if (portableOverride) return path.resolve(portableOverride);
   if (process.versions.electron) {
     try {
       // Loaded lazily so the CLI remains portable without Electron.
@@ -31,7 +34,7 @@ export function getAppDataRoot(): string {
     }
   }
   const roaming = process.env.APPDATA || process.env.XDG_CONFIG_HOME;
-  return path.resolve(roaming || '.', 'whiteboard-downloader');
+  return path.resolve(roaming || '.', 'blackbox');
 }
 
 export function getAppPaths(): AppPaths {
@@ -40,10 +43,10 @@ export function getAppPaths(): AppPaths {
     root,
     configFile: path.join(root, 'settings.json'),
     credentialsFile: path.join(root, 'credentials.bin'),
-    databaseFile: path.join(root, 'whiteboard.db'),
+    databaseFile: path.join(root, 'blackbox.db'),
     fileTreeFile: path.join(root, 'file_tree.json'),
     logsDir: path.join(root, 'logs'),
-    logFile: path.join(root, 'logs', 'whiteboard.log'),
+    logFile: path.join(root, 'logs', 'blackbox.log'),
     browserDir: path.join(root, 'browsers'),
     browserProfileDir: path.join(root, 'browser-profile'),
     exportsDir: path.join(root, 'agent-export'),

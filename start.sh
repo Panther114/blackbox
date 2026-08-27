@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 
 echo "========================================"
-echo "  BlackboardChina Downloader Launcher"
+echo "  Blackbox Launcher"
 echo "========================================"
 echo ""
 
