@@ -173,9 +173,10 @@ jobs:
           while IFS= read -r -d '' file; do
             base="${file##*/}"
             case "$base" in
-              latest-linux.yml|latest-mac.yml|latest.yml|builder-debug.yml|builder-effective-config.yaml|SHA256SUMS-*) continue ;;
+              Blackbox-*.exe|Blackbox-*.exe.blockmap|Blackbox-*.AppImage|Blackbox-*.AppImage.zsync|Blackbox-*.deb|Blackbox-*.dmg|Blackbox-*.dmg.blockmap|Blackbox-*.zip|Blackbox-*.zip.blockmap|SHA256SUMS-*)
+                cp "$file" "release-assets/$base"
+                ;;
             esac
-            cp "$file" "release-assets/$base"
           done < <(find release-artifacts -type f -print0)
           for metadata in latest.yml latest-linux.yml latest-mac.yml; do
             if [ -f "release-artifacts/$metadata" ]; then cp "release-artifacts/$metadata" "release-assets/$metadata"; fi
