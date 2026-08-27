@@ -1,7 +1,8 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { safeStorage } from 'electron';
-import { AppPaths } from '../appPaths';
+import { AppPaths, getUserConfigRoot } from '../appPaths';
 import { readEnvFile } from '../utils/envFile';
 
 export interface DesktopSettings {
@@ -14,15 +15,14 @@ export interface DesktopSettings {
 
 const defaults: DesktopSettings = {
   username: '',
-  downloadDir: path.join(process.env.USERPROFILE || '.', 'Downloads', 'Blackbox'),
+  downloadDir: path.join(os.homedir(), 'Downloads', 'Blackbox'),
   headless: true,
   courseFilter: '',
   autoCheckUpdates: true,
 };
 
 function legacyRoots(): string[] {
-  const roaming = process.env.APPDATA || process.env.XDG_CONFIG_HOME || '.';
-  const legacyBase = path.resolve(roaming, 'whiteboard-downloader');
+  const legacyBase = path.join(getUserConfigRoot(), 'whiteboard-downloader');
   return [path.join(legacyBase, 'data'), legacyBase];
 }
 
@@ -32,7 +32,13 @@ function firstExistingFile(roots: string[], filename: string): string | null {
 }
 
 function copyIfMissing(source: string | null, target: string): void {
-  if (source && fs.existsSync(source) && !fs.existsSync(target)) fs.copyFileSync(source, target);
+  if (!source || !fs.existsSync(source) || fs.existsSync(target)) return;
+  try {
+    fs.copyFileSync(source, target);
+  } catch {
+    // Legacy data is optional. Keep the source in place and let the UI offer
+    // a repair path instead of preventing the desktop window from opening.
+  }
 }
 
 function copyDirectoryIfMissing(source: string | null, target: string): void {
@@ -44,11 +50,38 @@ function copyDirectoryIfMissing(source: string | null, target: string): void {
       return;
     }
   }
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.cpSync(source, target, { recursive: true, force: false, errorOnExist: false });
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.cpSync(source, target, {
+      recursive: true,
+      force: false,
+      errorOnExist: false,
+      filter: candidate => {
+        const name = path.basename(candidate);
+        return name !== 'LOCK' && !name.startsWith('Singleton');
+      },
+    });
+  } catch {
+    // Chromium profile files can be locked by the previous app instance.
+    // Failing to copy an optional cache must never block Blackbox startup.
+  }
+}
+
+export interface PasswordStatus {
+  stored: boolean;
+  readable: boolean;
+  error?: string;
+}
+
+export interface LegacyMigrationResult {
+  migrated: boolean;
+  browserProfileSource?: string;
 }
 
 export class SecureDesktopStore {
+  private passwordReadable = false;
+  private passwordReadError = '';
+
   constructor(private readonly paths: AppPaths) {}
 
   loadSettings(): DesktopSettings {
@@ -68,27 +101,73 @@ export class SecureDesktopStore {
   }
 
   async getPassword(): Promise<string> {
-    if (!fs.existsSync(this.paths.credentialsFile) || !safeStorage.isEncryptionAvailable()) return '';
-    const encrypted = fs.readFileSync(this.paths.credentialsFile);
-    const storage = safeStorage as typeof safeStorage & {
-      decryptStringAsync?: (input: Buffer) => Promise<{ result: string }>;
-    };
-    if (storage.decryptStringAsync) return (await storage.decryptStringAsync(encrypted)).result;
-    return safeStorage.decryptString(encrypted);
+    this.passwordReadable = false;
+    this.passwordReadError = '';
+    if (!fs.existsSync(this.paths.credentialsFile)) return '';
+
+    try {
+      if (!safeStorage.isEncryptionAvailable()) {
+        this.passwordReadError = this.secureStorageUnavailableMessage();
+        return '';
+      }
+
+      const encrypted = fs.readFileSync(this.paths.credentialsFile);
+      const storage = safeStorage as typeof safeStorage & {
+        decryptStringAsync?: (input: Buffer) => Promise<{ result: string; shouldReEncrypt?: boolean }>;
+      };
+      if (storage.decryptStringAsync) {
+        const decrypted = await storage.decryptStringAsync(encrypted);
+        this.passwordReadable = true;
+        if (decrypted.shouldReEncrypt) {
+          void this.setPassword(decrypted.result).catch(() => undefined);
+        }
+        return decrypted.result;
+      }
+
+      const password = safeStorage.decryptString(encrypted);
+      this.passwordReadable = true;
+      return password;
+    } catch (error) {
+      this.passwordReadError = `The saved password could not be unlocked. Re-enter it in Settings to repair secure storage (${error instanceof Error ? error.message : String(error)}).`;
+      return '';
+    }
   }
 
   async setPassword(password: string): Promise<void> {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows credential encryption is unavailable.');
+    if (!safeStorage.isEncryptionAvailable()) throw new Error(this.secureStorageUnavailableMessage());
     const storage = safeStorage as typeof safeStorage & { encryptStringAsync?: (value: string) => Promise<Buffer> };
     const encrypted = storage.encryptStringAsync ? await storage.encryptStringAsync(password) : safeStorage.encryptString(password);
     fs.writeFileSync(this.paths.credentialsFile, encrypted);
+    this.passwordReadable = true;
+    this.passwordReadError = '';
   }
 
   clearPassword(): void {
     if (fs.existsSync(this.paths.credentialsFile)) fs.rmSync(this.paths.credentialsFile, { force: true });
+    this.passwordReadable = false;
+    this.passwordReadError = '';
   }
 
-  async migrateLegacySettings(): Promise<{ migrated: boolean }> {
+  getPasswordStatus(): PasswordStatus {
+    const stored = fs.existsSync(this.paths.credentialsFile);
+    return {
+      stored,
+      readable: stored && this.passwordReadable,
+      ...(this.passwordReadError ? { error: this.passwordReadError } : {}),
+    };
+  }
+
+  private secureStorageUnavailableMessage(): string {
+    if (process.platform === 'linux') {
+      return 'Linux secure credential storage is unavailable. Start GNOME Keyring, KWallet, or another Secret Service provider, then retry.';
+    }
+    if (process.platform === 'darwin') {
+      return 'macOS Keychain is unavailable. Unlock Keychain Access, then retry.';
+    }
+    return 'The operating system secure credential store is unavailable. Repair the installation or re-enter the password after it becomes available.';
+  }
+
+  async migrateLegacySettings(): Promise<LegacyMigrationResult> {
     if (fs.existsSync(this.paths.configFile)) return { migrated: false };
     const roots = legacyRoots();
     const legacySettings = firstExistingFile(roots, 'settings.json');
@@ -133,14 +212,31 @@ export class SecureDesktopStore {
     copyIfMissing(legacyDatabase, this.paths.databaseFile);
     copyIfMissing(legacyFileTree, this.paths.fileTreeFile);
     copyDirectoryIfMissing(legacyExport, this.paths.exportsDir);
-    copyDirectoryIfMissing(legacyBrowserProfile, this.paths.browserProfileDir);
     if (legacyEnv && !fs.existsSync(this.paths.credentialsFile)) {
       const env = readEnvFile(legacyEnv);
       if (env.BB_PASSWORD) await this.setPassword(env.BB_PASSWORD);
     }
     // Preserve a non-secret migration marker; legacy data is never deleted.
     fs.writeFileSync(path.join(this.paths.root, 'migration-v1.json'), JSON.stringify({ migratedAt: new Date().toISOString(), source: legacySettings || legacyEnv || legacyCredentials }) + '\n');
-    return { migrated: true };
+    return { migrated: true, browserProfileSource: legacyBrowserProfile || undefined };
+  }
+
+  async migrateLegacyBrowserProfile(source?: string): Promise<void> {
+    if (!source || !fs.existsSync(source) || fs.existsSync(path.join(this.paths.browserProfileDir, 'Preferences'))) return;
+    try {
+      await fs.promises.cp(source, this.paths.browserProfileDir, {
+        recursive: true,
+        force: false,
+        errorOnExist: false,
+        filter: candidate => {
+          const name = path.basename(candidate);
+          return name !== 'LOCK' && !name.startsWith('Singleton');
+        },
+      });
+    } catch {
+      // Browser profile state is optional and may contain files locked by the
+      // previous app instance. Credentials and settings already migrated.
+    }
   }
 
   async applyToEnvironment(): Promise<DesktopSettings> {
@@ -156,7 +252,7 @@ export class SecureDesktopStore {
       FILE_TREE_PATH: this.paths.fileTreeFile,
       LOG_FILE: this.paths.logFile,
       BROWSER_PROFILE_DIR: this.paths.browserProfileDir,
-      USE_SYSTEM_EDGE: 'true',
+      USE_SYSTEM_EDGE: String(process.platform === 'win32'),
       BLACKBOX_APP_DATA_DIR: this.paths.root,
     });
     return settings;

@@ -1,5 +1,6 @@
 import { config as dotenvConfig } from 'dotenv';
 import { z } from 'zod';
+import os from 'os';
 import path from 'path';
 import { Config } from '../types';
 
@@ -33,7 +34,7 @@ const ConfigSchema = z.object({
  * Load and validate configuration from environment variables
  */
 export function loadConfig(): Config {
-  const downloadDir = process.env.DOWNLOAD_DIR || './downloads';
+  const downloadDir = process.env.DOWNLOAD_DIR || path.join(os.homedir(), 'Downloads', 'Blackbox');
   const config = {
     username: process.env.BB_USERNAME || '',
     password: process.env.BB_PASSWORD || '',
@@ -53,7 +54,9 @@ export function loadConfig(): Config {
     retryDelay: parseInt(process.env.RETRY_DELAY || '2000', 10),
     fileTreePath: process.env.FILE_TREE_PATH || path.join(downloadDir, 'file_tree.json'),
     browserProfileDir: process.env.BROWSER_PROFILE_DIR || undefined,
-    useSystemEdge: process.env.USE_SYSTEM_EDGE !== 'false',
+    useSystemEdge: process.env.USE_SYSTEM_EDGE === undefined
+      ? process.platform === 'win32'
+      : process.env.USE_SYSTEM_EDGE === 'true',
   };
 
   // Validate configuration

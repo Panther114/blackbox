@@ -1,22 +1,28 @@
 # Troubleshooting
 
-## Node not installed
+## Packaged app does not open
+
+**Symptom:** the installed Blackbox process appears briefly or no window is visible.
+
+**Fix:** install the latest platform installer from [GitHub Releases](https://github.com/Panther114/blackbox/releases). If the problem persists, open the Blackbox log from Settings and keep the existing user data; reinstalling does not delete saved data.
+
+## Node not installed (source launcher)
 
 **Symptom:** launcher says Node.js is missing.
 
-**Fix:** install Node.js LTS from https://nodejs.org/ (20.x or 22.x), then run launcher again.
+**Fix:** install Node.js 22.x or 24.x from https://nodejs.org/, then run the launcher again.
 
 ## Node too old
 
-**Symptom:** version <18 error.
+**Symptom:** Node.js is below the supported 22.x baseline.
 
-**Fix:** upgrade to Node.js 20.x or 22.x LTS.
+**Fix:** upgrade to Node.js 22.x or 24.x.
 
 ## Node too new (v24 unsupported)
 
-**Symptom:** unsupported/too-new Node message.
+**Symptom:** Node.js is outside the supported 22.x or 24.x range.
 
-**Fix:** switch to Node.js 20.x or 22.x LTS and rerun launcher.
+**Fix:** switch to Node.js 22.x or 24.x and rerun launcher.
 
 ## npm install failed
 
@@ -75,11 +81,23 @@ Then rerun launcher.
 2. Re-enter Blackboard credentials
 3. Try visible mode (`HEADLESS=false`) for debugging
 
-## Blackboard unreachable
+## Linux secure credential storage unavailable
+
+**Symptom:** saving credentials reports that Linux secure credential storage is unavailable.
+
+**Fix:** start GNOME Keyring, KWallet, or another Secret Service provider for the desktop session, then reopen Blackbox. The password is intentionally not written as plain text.
+
+## macOS Keychain unavailable
+
+**Symptom:** saving credentials reports that macOS Keychain is unavailable.
+
+**Fix:** unlock Keychain Access and reopen Blackbox. Unsigned local builds may prompt for Keychain permission more often than signed releases.
+
+## BlackboardChina unreachable
 
 **Symptom:** network/timeout errors, doctor reachability warnings.
 
-**Fix:** verify internet, VPN/firewall/proxy, and Blackboard site availability. Retry later if Blackboard is down.
+**Fix:** verify internet, VPN/firewall/proxy, and BlackboardChina site availability. Retry later if BlackboardChina is down.
 
 ## No courses found
 

@@ -1,31 +1,40 @@
-# Blackbox v1.0.0
+# Blackbox — BlackboardChina Downloader
+
+Blackbox is the brand for a desktop BlackboardChina course-material downloader. It discovers courses and supported documents from BlackboardChina, then saves the selected files locally. It does not submit coursework or change Blackboard data.
 
 This application is provided solely for educational, personal, and technical purposes. By using this application, you acknowledge and agree that you are solely responsible for ensuring that your use complies with all applicable SHSID policies, platform terms, laws, and regulations.
 
 The developer does not endorse, encourage, or authorize any misuse of this application, including any use that violates school policies, platform rules, or legal requirements. To the maximum extent permitted by applicable law, the developer disclaims all responsibility and liability for any misuse of the application, any violation committed by users, and any direct or indirect consequences resulting from such use.
 
-## Normal user path (GitHub Releases ZIP)
+## Normal user path (GitHub Releases)
 
-Requires Node.js **22.x or 24.x** installed manually.
+Download the installer for your platform from [GitHub Releases](https://github.com/Panther114/blackbox/releases):
 
-1. Download the ZIP from **GitHub Releases**.
-2. Unzip it.
-3. Double-click one launcher in the project folder:
-   - `start-gui.bat` (Windows)
-   - `start-guui.sh` (macOS/Linux)
-   - Optional TUI launchers: `start.bat` / `start.sh`
-4. The launcher now automatically:
+1. **Windows:** run `Blackbox-1.0.0-x64.exe`.
+2. **macOS:** open the `Blackbox-1.0.0-*.dmg` for your Mac architecture and drag Blackbox to Applications.
+3. **Linux:** run the `Blackbox-1.0.0-*.AppImage` (make it executable first), or install the matching `.deb` on Debian/Ubuntu/Mint.
+4. Launch Blackbox and save your BlackboardChina credentials in Settings.
+
+### Source fallback
+
+If you prefer to run from source, install Node.js **22.x or 24.x** manually, then:
+
+1. Clone or download this repository.
+2. Double-click or run the launcher for your platform:
+   - `start-gui.bat` / `start-gui.ps1` (Windows)
+   - `start-gui.sh` (macOS/Linux)
+3. The launcher automatically:
    - checks Node/npm compatibility,
    - installs dependencies (TUI launchers use lightweight bootstrap without GUI/Electron packages),
    - builds if needed,
    - installs Playwright Chromium,
    - runs setup if config is missing/invalid,
-   - launches download.
+   - launches Blackbox.
    - (first run may take longer while dependencies/build/Playwright install complete)
    - if install is interrupted, rerunning launcher repairs incomplete `node_modules`
-5. Enter Blackboard credentials once in setup.
-6. Select courses/files in TUI/GUI checkboxes.
-7. On future runs, double-click the same launcher again.
+4. Enter BlackboardChina credentials once in setup.
+5. Select courses/files in TUI/GUI checkboxes.
+6. On future runs, double-click the same launcher again.
 
 See [README-USER.md](README-USER.md) for short student instructions.
 
@@ -55,6 +64,14 @@ npm start download
 - `npm run gui:dev` – GUI development mode
 - `npm run build:gui` – build CLI + GUI bundles
 
+### Platform build commands
+
+- `npm run build:app:windows` – build the Windows installer on Windows.
+- `npm run build:app:mac` – build the macOS DMG and ZIP on macOS.
+- `npm run build:app:linux` – build Linux AppImage and Debian packages on Linux for x64.
+
+The platform packaging scripts intentionally require a matching host OS. This keeps the bundled Chromium runtime and native SQLite module aligned with the package being produced; the release workflow builds each platform on its native GitHub Actions runner.
+
 ## Offline GUI screenshots
 
 Run `npm run gui:demo` to launch a local renderer demo that never contacts Blackboard. The renderer also accepts seeded `screen` states for screenshot and layout QA:
@@ -72,7 +89,7 @@ The seeded states use local fixture data only. The normal download path remains 
 
 ## Agent and MCP integration
 
-The installed Windows application can use credentials saved in Settings. Configure an MCP client to start its installed executable with `--mcp`:
+The installed Blackbox application can use credentials saved in Settings. Configure an MCP client to start its installed executable with `--mcp`:
 
 ```json
 {
@@ -85,7 +102,7 @@ The installed Windows application can use credentials saved in Settings. Configu
 }
 ```
 
-For a portable CLI integration, configure `BB_USERNAME`, `BB_PASSWORD`, and `DOWNLOAD_DIR` in the MCP process environment (or a `.env` in its working directory), then use one of:
+For a portable CLI integration on any supported platform, configure `BB_USERNAME`, `BB_PASSWORD`, and `DOWNLOAD_DIR` in the MCP process environment (or a `.env` in its working directory), then use one of:
 
 ```bash
 npx --yes blackbox@1.0.0 mcp

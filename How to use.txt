@@ -2,11 +2,13 @@ This application is provided solely for educational, personal, and technical pur
 
 The developer does not endorse, encourage, or authorize any misuse of this application, including any use that violates school policies, platform rules, or legal requirements. To the maximum extent permitted by applicable law, the developer disclaims all responsibility and liability for any misuse of the application, any violation committed by users, and any direct or indirect consequences resulting from such use.
 
-Simple Setup Guide (<5 min)
+Blackbox is a BlackboardChina course-material downloader.
 
-1. Install node using the node-v20.11.1-x64-setup.msi (if mac, download from official site)
-2. Navigate to blackbox-main, click start-gui.bat (windows) or start-gui.sh (mac). Note that you will have to do this every time you open the app, but there will be no repeating package installations.
-3. Follow instructions, turn off VPN, package install + setup should be done in <2min
-4. The application would automatically run.
+For normal use, install Blackbox from the GitHub Releases page:
+1. Windows: run the Blackbox .exe installer.
+2. macOS: open the Blackbox .dmg and move it to Applications.
+3. Linux: run the Blackbox .AppImage or install the .deb package.
+
+For a source checkout, install Node.js 22.x or 24.x and run start-gui.bat/start-gui.ps1 on Windows or start-gui.sh on macOS/Linux.
 
 Encountering an unresolved error? Contact jinling114@outlook.com or wechat-id "gavin_yuziheng"

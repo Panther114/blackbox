@@ -30,7 +30,19 @@ jobs:
         run: npm test -- --runInBand
 
   gui-build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            label: linux
+          - os: macos-15
+            label: macos-arm64
+          - os: macos-15-intel
+            label: macos-x64
+          - os: windows-latest
+            label: windows
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     steps:
@@ -46,5 +58,9 @@ jobs:
       - name: Install full dependencies
         run: npm ci
 
-      - name: Build GUI
+      - name: Build CLI and GUI (${{ matrix.label }})
         run: npm run build:gui
+
+      - name: Verify package configuration
+        shell: bash
+        run: node -e "const p=require('./package.json'); if (!p.build.mac || !p.build.linux || !p.build.win) process.exit(1); console.log(JSON.stringify({platform:process.platform,arch:process.arch,mac:p.build.mac.target,linux:p.build.linux.target,win:p.build.win.target},null,2))"

@@ -2,6 +2,7 @@ import fs from 'fs';
 import { chromium, firefox, webkit, Browser, BrowserContext, Page } from 'playwright-core';
 import { Config } from '../types';
 import { log } from '../utils/logger';
+import { getBundledChromiumExecutable } from './browserPath';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -11,6 +12,8 @@ const AUTOMATION_BROWSER_MISSING_ERROR =
   'No automation browser is available. Install Microsoft Edge or Playwright Chromium, then retry.';
 
 function managedChromiumExecutable(): string | undefined {
+  const bundled = getBundledChromiumExecutable();
+  if (bundled) return bundled;
   try {
     const executable = chromium.executablePath();
     return executable && fs.existsSync(executable) ? executable : undefined;
@@ -18,6 +21,8 @@ function managedChromiumExecutable(): string | undefined {
     return undefined;
   }
 }
+
+export { getBundledChromiumExecutable } from './browserPath';
 
 export function isNavigationTimeoutError(error: unknown): boolean {
   return /page\.goto: Timeout \d+ms exceeded|navigation timeout/i.test(errorMessage(error));

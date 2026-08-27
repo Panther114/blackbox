@@ -1,4 +1,6 @@
-# Blackbox Features
+# Blackbox — BlackboardChina Downloader
+
+Blackbox is a branded desktop and CLI downloader for BlackboardChina course materials.
 
 ## User workflow and setup
 

@@ -34,6 +34,44 @@ let workerBootstrapError = '';
 let requestCounter = 0;
 let desktopStore: SecureDesktopStore;
 const agentService = new AgentService();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+function startupErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function recordStartupFailure(error: unknown): void {
+  const message = startupErrorMessage(error);
+  try {
+    const paths = ensureAppPaths();
+    fs.appendFileSync(paths.logFile, `[${new Date().toISOString()}] [error] Blackbox startup failed: ${message}\n`, 'utf8');
+  } catch {
+    // There is no safe filesystem fallback if the per-user data directory is
+    // unavailable. The visible error dialog below remains the last resort.
+  }
+}
+
+function handleStartupFailure(error: unknown): void {
+  recordStartupFailure(error);
+  if (app.isReady()) {
+    dialog.showErrorBox(
+      'Blackbox could not start',
+      `${startupErrorMessage(error)}\n\nOpen Blackbox again after repairing the installation, or check the Blackbox log for details.`,
+    );
+  }
+  app.quit();
+}
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
 
 function startPackagedMcpServer(): void {
   const serverPath = path.resolve(__dirname, '..', 'mcp', 'server.js');
@@ -63,13 +101,14 @@ function isDemoGui(): boolean {
 
 function appVersion(): string { return app.getVersion(); }
 
-function appIconPath(): string {
+function appIconPath(): string | undefined {
   const candidates = [
     path.resolve(__dirname, '../../assets/app-icon.ico'),
+    path.resolve(__dirname, '../../assets/app-icon.svg'),
     path.resolve(__dirname, '../../build/icon.ico'),
     path.resolve(__dirname, 'renderer/app-icon.ico'),
   ];
-  return candidates.find(candidate => fs.existsSync(candidate)) || candidates[0];
+  return candidates.find(candidate => fs.existsSync(candidate)) || undefined;
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
@@ -85,13 +124,14 @@ function sendWorkflowEvent(type: string, payload: unknown): void {
 }
 
 function createWindow(): void {
+  const icon = appIconPath();
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 820,
     minWidth: 980,
     minHeight: 680,
     title: `Blackbox v${appVersion()}`,
-    icon: appIconPath(),
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -425,17 +465,36 @@ async function runDoctor(loginTest: boolean): Promise<DoctorCheck[]> {
   return checks;
 }
 
-app.whenReady().then(async () => {
+async function initializeDesktopApp(): Promise<void> {
   app.setAppUserModelId('com.panther114.blackbox');
   const appPaths = ensureAppPaths();
   desktopStore = new SecureDesktopStore(appPaths);
-  await desktopStore.migrateLegacySettings();
-  await desktopStore.applyToEnvironment();
+  let legacyBrowserProfileSource: string | undefined;
+
+  // Migration and secure-store access are allowed to degrade gracefully. A
+  // corrupt legacy profile or an unavailable OS keychain must not leave an
+  // invisible Electron process with no way for the user to repair settings.
+  try {
+    const migration = await desktopStore.migrateLegacySettings();
+    legacyBrowserProfileSource = migration.browserProfileSource;
+  } catch (error) {
+    recordStartupFailure(error);
+  }
+  try {
+    await desktopStore.applyToEnvironment();
+  } catch (error) {
+    recordStartupFailure(error);
+  }
   if (process.argv.includes('--mcp')) {
     startPackagedMcpServer();
     return;
   }
   createWindow();
+  if (legacyBrowserProfileSource) {
+    mainWindow?.webContents.once('did-finish-load', () => {
+      void desktopStore.migrateLegacyBrowserProfile(legacyBrowserProfileSource);
+    });
+  }
   initializeUpdater(state => sendWorkflowEvent('update:state', state));
   const settings = desktopStore.loadSettings();
   if (settings.autoCheckUpdates) {
@@ -449,10 +508,14 @@ app.whenReady().then(async () => {
     assertTrustedSender(event);
     const settings = desktopStore.loadSettings();
     const password = await desktopStore.getPassword();
+    const passwordStatus = desktopStore.getPasswordStatus();
     return {
       hasCredentials: Boolean(settings.username && password),
       username: settings.username,
       password,
+      passwordStored: passwordStatus.stored,
+      passwordReadable: passwordStatus.readable,
+      passwordError: passwordStatus.error,
       downloadDir: settings.downloadDir,
       headless: settings.headless,
       courseFilter: settings.courseFilter,
@@ -603,7 +666,13 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-});
+}
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.whenReady().then(initializeDesktopApp).catch(handleStartupFailure);
+}
 
 app.on('window-all-closed', async () => {
   await stopGuiWorker();

@@ -1,4 +1,6 @@
-# Technical Documentation
+# Blackbox Technical Documentation
+
+Blackbox is a BlackboardChina course-material downloader. The product brand is Blackbox; BlackboardChina remains the service it connects to.
 
 ## Entry points
 
@@ -25,7 +27,7 @@
 
 ## Doctor checks
 
-- Node version range (`>=18`, `<24`)
+- Node version range (`>=22`, `<25`)
 - npm availability
 - dependencies/build presence
 - Playwright Chromium presence
@@ -39,7 +41,7 @@
 - `node dist/cli.js config-check` validates only setup readiness:
   - `.env` exists
   - non-placeholder `BB_USERNAME` and `BB_PASSWORD`
-  - `DOWNLOAD_DIR` present or defaultable to `./downloads`
+  - `DOWNLOAD_DIR` present or defaultable to `~/Downloads/Blackbox`
 - `--quiet` suppresses output and is used by launchers for exit-code-only gating.
 
 ## File type and extension handling

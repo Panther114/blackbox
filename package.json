@@ -1,7 +1,7 @@
 {
   "name": "blackbox",
   "version": "1.0.0",
-  "description": "Desktop and agent-ready Blackbox course-material downloader",
+  "description": "Blackbox desktop and agent-ready BlackboardChina course-material downloader",
   "main": "dist/gui/main.js",
   "bin": {
     "blackbox": "./dist/cli.js"
@@ -12,8 +12,12 @@
     "build": "tsc",
     "prepack": "npm run build",
     "build:gui": "tsc -p tsconfig.gui.json && vite build --config vite.gui.config.ts",
-    "build:app": "npm run build:gui && electron-builder --win nsis --x64",
-    "build:unpacked": "npm run build:gui && electron-builder --win dir --x64",
+    "prepare:packaged-browser": "node scripts/prepare-browser.js",
+    "build:app": "npm run build:app:windows",
+    "build:app:windows": "node scripts/assert-target-platform.js windows && npm run build:gui && npm run prepare:packaged-browser && electron-builder --win nsis --x64",
+    "build:app:linux": "node scripts/assert-target-platform.js linux && npm run build:gui && npm run prepare:packaged-browser && electron-builder --linux AppImage deb --x64",
+    "build:app:mac": "node scripts/assert-target-platform.js macos && npm run build:gui && npm run prepare:packaged-browser && electron-builder --mac dmg zip",
+    "build:unpacked": "node scripts/assert-target-platform.js windows && npm run build:gui && npm run prepare:packaged-browser && electron-builder --win dir --x64",
     "dev": "ts-node src/cli.ts",
     "gui": "electron dist/gui/main.js",
     "gui:dev": "npm run build && concurrently -k \"vite --config vite.gui.config.ts\" \"wait-on tcp:5173 && electron dist/gui/main.js --dev\"",
@@ -57,11 +61,11 @@
     "p-limit": "^3.1.0",
     "p-retry": "^4.6.2",
     "playwright-core": "^1.40.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "sanitize-filename": "^1.6.3",
     "winston": "^3.11.0",
-    "zod": "^3.22.4",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.8",
@@ -72,10 +76,11 @@
     "@types/node": "^20.10.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
-    "eslint": "^8.55.0",
     "electron": "^41.3.0",
     "electron-builder": "^26.0.0",
+    "eslint": "^8.55.0",
     "jest": "^29.7.0",
+    "js-yaml": "^4.3.2",
     "prettier": "^3.1.0",
     "ts-jest": "^29.1.1",
     "ts-node": "^10.9.2",
@@ -96,7 +101,7 @@
   "build": {
     "appId": "com.panther114.blackbox",
     "productName": "Blackbox",
-    "artifactName": "Blackbox-Setup-${version}-${arch}.${ext}",
+    "artifactName": "Blackbox-${version}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
       "node_modules/better-sqlite3/**",
@@ -116,12 +121,63 @@
     },
     "win": {
       "icon": "assets/app-icon.ico",
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "verifyUpdateCodeSignature": false,
       "signtoolOptions": {
         "publisherName": "Panther114"
       }
     },
+    "mac": {
+      "icon": "assets/app-icon.svg",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.education"
+    },
+    "linux": {
+      "icon": "assets/app-icon.svg",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "Education",
+      "executableName": "blackbox",
+      "synopsis": "BlackboardChina course-material downloader",
+      "description": "Blackbox is a BlackboardChina course-material downloader."
+    },
+    "extraResources": [
+      {
+        "from": "build/playwright-browsers",
+        "to": "playwright-browsers"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "perMachine": false,
@@ -131,6 +187,13 @@
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false
     },
-    "publish": [{ "provider": "github", "owner": "Panther114", "repo": "blackbox", "releaseType": "release" }]
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Panther114",
+        "repo": "blackbox",
+        "releaseType": "release"
+      }
+    ]
   }
 }

@@ -15,16 +15,22 @@ function homeDirectory(): string {
   return process.env.USERPROFILE || os.homedir();
 }
 
+function codexSkillsDirectory(homeDir: string): string {
+  const configuredHome = process.env.CODEX_HOME;
+  if (configuredHome) return path.join(path.resolve(configuredHome), 'skills');
+  return path.join(homeDir, '.codex', 'skills');
+}
+
 export function getCodexSkillPath(homeDir = homeDirectory()): string {
+  return path.join(codexSkillsDirectory(homeDir), CODEX_SKILL_NAME);
+}
+
+function legacyCodexSkillPath(homeDir: string): string {
   return path.join(homeDir, '.agents', 'skills', CODEX_SKILL_NAME);
 }
 
-function skillFilePath(homeDir?: string): string {
-  return path.join(getCodexSkillPath(homeDir), 'SKILL.md');
-}
-
-function isManagedSkill(homeDir?: string): boolean {
-  const skillFile = skillFilePath(homeDir);
+function isManagedSkillAt(skillPath: string): boolean {
+  const skillFile = path.join(skillPath, 'SKILL.md');
   if (!fs.existsSync(skillFile)) return false;
   try {
     return fs.readFileSync(skillFile, 'utf8').includes(MANAGED_MARKER);
@@ -35,7 +41,7 @@ function isManagedSkill(homeDir?: string): boolean {
 
 export function getCodexSkillStatus(homeDir = homeDirectory()): CodexSkillStatus {
   const skillPath = getCodexSkillPath(homeDir);
-  const managed = isManagedSkill(homeDir);
+  const managed = isManagedSkillAt(skillPath);
   return {
     installed: managed,
     path: skillPath,
@@ -49,12 +55,12 @@ function buildSkillMarkdown(downloadDir: string): string {
   return `${MANAGED_MARKER}
 ---
 name: ${CODEX_SKILL_NAME}
-description: Read the local Blackbox course export without changing Blackboard or submitting coursework.
+description: Read the local BlackboardChina course export produced by Blackbox, a BlackboardChina downloader, without changing Blackboard or submitting coursework.
 ---
 
-# Blackbox course export
+# Blackbox BlackboardChina course export
 
-Use this skill when the user asks about their locally exported Blackbox course material.
+Blackbox is the brand for a BlackboardChina course-material downloader. Use this skill when the user asks about locally exported BlackboardChina course material.
 
 The export is read-only. Start by reading the manifest at \`${manifestPath}\`. Course content is stored below \`${exportRoot}\`.
 
@@ -73,7 +79,7 @@ If the Blackbox MCP server is configured, use its read-only tools for course dis
 function buildOpenAiMetadata(): string {
   return `interface:
   display_name: "Blackbox"
-  short_description: "Read a local Blackbox course export"
+  short_description: "Read a local BlackboardChina export"
   default_prompt: "Use the local Blackbox export as read-only course context."
 
 policy:
@@ -86,8 +92,12 @@ export function installCodexSkill(
   homeDir = homeDirectory(),
 ): CodexSkillStatus {
   const skillPath = getCodexSkillPath(homeDir);
-  if (fs.existsSync(skillPath) && !isManagedSkill(homeDir)) {
+  const legacyPath = legacyCodexSkillPath(homeDir);
+  if (fs.existsSync(skillPath) && !isManagedSkillAt(skillPath)) {
     throw new Error(`Cannot install Blackbox skill because ${skillPath} already exists and is not managed by this app.`);
+  }
+  if (!fs.existsSync(skillPath) && isManagedSkillAt(legacyPath)) {
+    fs.rmSync(legacyPath, { recursive: true, force: true });
   }
 
   fs.mkdirSync(path.join(skillPath, 'agents'), { recursive: true });
@@ -98,10 +108,11 @@ export function installCodexSkill(
 
 export function removeCodexSkill(homeDir = homeDirectory()): CodexSkillStatus {
   const skillPath = getCodexSkillPath(homeDir);
-  if (!fs.existsSync(skillPath)) return getCodexSkillStatus(homeDir);
-  if (!isManagedSkill(homeDir)) {
+  const pathToRemove = fs.existsSync(skillPath) ? skillPath : legacyCodexSkillPath(homeDir);
+  if (!fs.existsSync(pathToRemove)) return getCodexSkillStatus(homeDir);
+  if (!isManagedSkillAt(pathToRemove)) {
     throw new Error(`Cannot remove ${skillPath} because it is not managed by this app.`);
   }
-  fs.rmSync(skillPath, { recursive: true, force: true });
+  fs.rmSync(pathToRemove, { recursive: true, force: true });
   return getCodexSkillStatus(homeDir);
 }

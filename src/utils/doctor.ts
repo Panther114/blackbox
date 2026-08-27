@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { chromium } from 'playwright-core';
 import axios from 'axios';
+import { getBundledChromiumExecutable } from '../auth/browserPath';
 import { Config } from '../types';
 import { readEnvFile, hasValidCredentials } from './envFile';
 
@@ -35,6 +36,7 @@ export function checkWritableDir(dirPath: string): boolean {
 }
 
 export function checkPlaywrightChromiumInstalled(): boolean {
+  if (getBundledChromiumExecutable()) return true;
   try {
     const executable = chromium.executablePath();
     return Boolean(executable && fs.existsSync(executable));

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 /**
@@ -20,6 +21,18 @@ export interface AppPaths {
   exportsDir: string;
 }
 
+/**
+ * Returns the conventional per-user configuration directory for the current
+ * platform. Electron supplies the authoritative userData path when the GUI
+ * is running; this fallback keeps the CLI and TUI launchers portable too.
+ */
+export function getUserConfigRoot(): string {
+  if (process.env.APPDATA) return path.resolve(process.env.APPDATA);
+  if (process.env.XDG_CONFIG_HOME) return path.resolve(process.env.XDG_CONFIG_HOME);
+  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support');
+  return path.join(os.homedir(), '.config');
+}
+
 export function getAppDataRoot(): string {
   const portableOverride = process.env.BLACKBOX_APP_DATA_DIR || process.env.WHITEBOARD_APP_DATA_DIR;
   if (portableOverride) return path.resolve(portableOverride);
@@ -33,8 +46,7 @@ export function getAppDataRoot(): string {
       // Fall through to OS defaults.
     }
   }
-  const roaming = process.env.APPDATA || process.env.XDG_CONFIG_HOME;
-  return path.resolve(roaming || '.', 'blackbox');
+  return path.join(getUserConfigRoot(), 'blackbox');
 }
 
 export function getAppPaths(): AppPaths {

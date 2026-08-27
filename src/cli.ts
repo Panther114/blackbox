@@ -100,7 +100,7 @@ program
 
 program
   .name('blackbox')
-  .description('Modern automation tool to download course materials from SHSID Blackboard')
+  .description('Blackbox downloader for course materials from SHSID BlackboardChina')
   .version('1.0.0');
 
 function isDebugMode(): boolean {
@@ -152,7 +152,7 @@ function runCommandForStatus(
 
 program
   .command('setup')
-  .description('First-time setup wizard for Blackboard credentials and downloader options')
+  .description('First-time setup wizard for BlackboardChina credentials and downloader options')
   .option('--reset', 'Recreate config cleanly and overwrite existing values')
   .option('--test-login', 'Test Blackboard login immediately after saving setup')
   .action(async options => {
@@ -426,7 +426,7 @@ program
 
 program
   .command('download')
-  .description('Discover course materials, select files interactively, then download')
+  .description('Discover BlackboardChina course materials, select files interactively, then download')
   .option('-u, --username <username>', 'Blackboard username (G-Number)')
   .option('-p, --password <password>', 'Blackboard password')
   .option('-d, --dir <directory>', 'Download directory', './downloads')

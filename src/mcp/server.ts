@@ -22,7 +22,7 @@ export async function startMcpServer(): Promise<void> {
   const server = new McpServer({ name: 'blackbox', version: '1.0.0' });
 
   server.registerTool('blackboard_status', {
-    description: 'Return local Blackboard downloader readiness. This tool never contacts Blackboard or changes data.',
+    description: 'Return local BlackboardChina downloader readiness. This tool never contacts BlackboardChina or changes data.',
   }, async () => {
     try {
       return result({ ok: true, ...(await service.status()), lock: getWorkflowLockStatus() });
@@ -32,7 +32,7 @@ export async function startMcpServer(): Promise<void> {
   });
 
   server.registerTool('blackboard_list_courses', {
-    description: 'Log in with locally stored credentials and list available Blackboard courses. Read-only.',
+    description: 'Log in with locally stored credentials and list available BlackboardChina courses. Read-only.',
   }, async () => {
     try {
       return result({ ok: true, courses: await service.listCourses() });
@@ -42,7 +42,7 @@ export async function startMcpServer(): Promise<void> {
   });
 
   server.registerTool('blackboard_sync', {
-    description: 'Read selected Blackboard course content, assignment details, announcements and optional allowed attachments. It never submits, grades, uploads, or changes Blackboard.',
+    description: 'Read selected BlackboardChina course content, assignment details, announcements and optional allowed attachments. It never submits, grades, uploads, or changes BlackboardChina.',
     inputSchema: {
       course_ids: z.array(z.string()).optional().describe('Blackboard course IDs. Omit for all courses.'),
       include_files: z.boolean().optional().default(true),
@@ -58,7 +58,7 @@ export async function startMcpServer(): Promise<void> {
   });
 
   server.registerTool('blackboard_get_item', {
-    description: 'Read one already-exported content item from the latest local agent manifest. Does not contact Blackboard.',
+    description: 'Read one already-exported content item from the latest local agent manifest. Does not contact BlackboardChina.',
     inputSchema: { item_id: z.string() },
   }, async ({ item_id }) => {
     try {
