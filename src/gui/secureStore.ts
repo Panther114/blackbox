@@ -36,7 +36,15 @@ function copyIfMissing(source: string | null, target: string): void {
 }
 
 function copyDirectoryIfMissing(source: string | null, target: string): void {
-  if (!source || !fs.existsSync(source) || fs.existsSync(target)) return;
+  if (!source || !fs.existsSync(source)) return;
+  if (fs.existsSync(target)) {
+    try {
+      if (fs.readdirSync(target).length > 0) return;
+    } catch {
+      return;
+    }
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.cpSync(source, target, { recursive: true, force: false, errorOnExist: false });
 }
 
@@ -91,7 +99,9 @@ export class SecureDesktopStore {
     const legacyExport = roots.map(root => path.join(root, 'agent-export')).find(candidate => fs.existsSync(candidate)) || null;
     const legacyBrowserProfile = roots.map(root => path.join(root, 'browser-profile')).find(candidate => fs.existsSync(candidate)) || null;
 
-    if (!legacySettings && !legacyEnv && !legacyCredentials) return { migrated: false };
+    if (!legacySettings && !legacyEnv && !legacyCredentials && !legacyDatabase && !legacyFileTree && !legacyExport && !legacyBrowserProfile) {
+      return { migrated: false };
+    }
 
     if (legacySettings) {
       try {
