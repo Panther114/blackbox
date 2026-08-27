@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Blackbox desktop and agent-ready BlackboardChina course-material downloader",
   "main": "dist/gui/main.js",
+  "desktopName": "blackbox",
   "bin": {
     "blackbox": "./dist/cli.js"
   },
@@ -171,7 +172,6 @@
         }
       ],
       "category": "Education",
-      "desktopName": "blackbox",
       "executableName": "blackbox",
       "syncDesktopName": true,
       "synopsis": "BlackboardChina course-material downloader",
