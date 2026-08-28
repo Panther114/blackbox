@@ -4,6 +4,7 @@ import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { app, BrowserWindow, dialog, ipcMain, shell, IpcMainInvokeEvent } from 'electron';
 import { compactConfigOverrides, getConfig } from '../config';
 import { BlackboardAuth } from '../auth';
+import { isBrowserProfileInUse } from '../auth/browserProfile';
 import {
   checkAutomationBrowserAvailable,
   checkUrlReachable,
@@ -441,6 +442,8 @@ async function runDoctor(loginTest: boolean): Promise<DoctorCheck[]> {
   if (loginTest) {
     if (!envStatus.validCredentials) {
       add('fail', 'Cannot run login test: credentials are missing');
+    } else if (config.browserProfileDir && await isBrowserProfileInUse(config.browserProfileDir)) {
+      add('warn', 'Login test skipped because a Blackboard browser is already running. Finish the current operation first.', false);
     } else {
       let auth: BlackboardAuth | null = null;
       try {

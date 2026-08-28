@@ -26,4 +26,14 @@ describe('GUI error messages', () => {
       'No automation browser is installed. Install Microsoft Edge or Playwright Chromium, then retry.',
     );
   });
+
+  it('explains a persistent browser profile conflict without exposing Playwright output', () => {
+    const error = new Error(
+      'Error invoking remote method \'workflow:start\': Error: The Blackboard browser is already running. Finish or close the other Blackbox operation, then retry.',
+    );
+
+    expect(toGuiErrorMessage(error)).toBe(
+      'The Blackboard browser is already running. Finish or close the other Blackbox operation, then retry.',
+    );
+  });
 });

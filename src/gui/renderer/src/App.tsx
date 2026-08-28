@@ -584,7 +584,7 @@ export function App() {
   return (
     <div className="app">
       <aside className="rail">
-        <div className="brand"><div className="brand-mark"><AppIcon /></div><div className="brand-text"><strong>Blackbox</strong><span>Downloader</span></div></div>
+        <div className="brand"><div className="brand-mark"><AppIcon /></div><div className="brand-text"><strong>Blackbox</strong><span>blackboardchina downloader</span></div></div>
         <nav className="rail-nav" aria-label="Primary">{navItems.map(item => <button key={item.id} className={`rail-item ${activeView === item.id ? 'is-active' : ''}`} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={item.hint} onClick={() => onNav(item.id)}><span className="rail-icon">{item.icon}</span><span className="rail-label"><span className="rail-title">{item.label}</span><span className="rail-hint">{item.hint}</span></span></button>)}</nav>
         <div className="rail-foot"><div className="rail-version">v{version || '...'}</div><div className="rail-paths"><button className="linklike" onClick={openDownloads} title={paths.downloads}>Downloads</button><span className="sep">/</span><button className="linklike" onClick={openLogs} title={paths.logs}>Logs</button></div><p className="rail-note">Educational use only. Use responsibly.</p></div>
       </aside>

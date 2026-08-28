@@ -71,6 +71,11 @@ export class DownloadWorkflow extends EventEmitter {
       this.emit('login:failure', {
         message: error instanceof Error ? error.message : String(error),
       });
+      try {
+        await this.cleanup();
+      } catch (cleanupError) {
+        log.warn(`Login failure cleanup did not complete: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+      }
       throw error;
     }
   }

@@ -3,6 +3,13 @@ import { chromium, firefox, webkit, Browser, BrowserContext, Page } from 'playwr
 import { Config } from '../types';
 import { log } from '../utils/logger';
 import { getBundledChromiumExecutable } from './browserPath';
+import {
+  archiveCorruptCrashpad,
+  archiveFailedBrowserProfile,
+  isCorruptCrashpadStartupError,
+  isBrowserProfileInUse,
+  isPersistentContextStartupError,
+} from './browserProfile';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -50,6 +57,10 @@ export function formatLoginNavigationError(error: unknown, loginUrl: string): st
 
 const LOGIN_NAVIGATION_TIMEOUT = 15000;
 const LOGIN_FORM_TIMEOUT = 6000;
+const BROWSER_PROFILE_IN_USE_ERROR =
+  'The Blackboard browser is already running. Finish or close the other Blackbox operation, then retry.';
+const BROWSER_PROFILE_RECOVERY_ERROR =
+  'The local browser could not start. Close other Blackbox or Chromium windows and retry. If the problem persists, run Diagnostics.';
 
 export class BlackboardAuth {
   private browser: Browser | null = null;
@@ -59,6 +70,66 @@ export class BlackboardAuth {
 
   constructor(config: Config) {
     this.config = config;
+  }
+
+  private async launchPersistentContext(
+    profileDir: string,
+    options: Parameters<typeof chromium.launchPersistentContext>[1],
+  ): Promise<BrowserContext> {
+    try {
+      return await chromium.launchPersistentContext(profileDir, options);
+    } catch (error) {
+      if (!isPersistentContextStartupError(error)) throw error;
+      if (await isBrowserProfileInUse(profileDir)) {
+        throw new Error(BROWSER_PROFILE_IN_USE_ERROR);
+      }
+
+      if (isCorruptCrashpadStartupError(error)) {
+        const crashpadBackupDir = await archiveCorruptCrashpad(profileDir);
+        if (crashpadBackupDir) {
+          log.warn(`Archived disposable Crashpad state at ${crashpadBackupDir}; retrying without changing the saved session.`);
+          try {
+            const context = await chromium.launchPersistentContext(profileDir, options);
+            log.info('Browser profile recovered after Crashpad cleanup.');
+            return context;
+          } catch (retryError) {
+            if (!isPersistentContextStartupError(retryError)) throw retryError;
+            log.warn('Crashpad cleanup did not resolve the persistent browser startup failure; quarantining the full profile.');
+          }
+        }
+      }
+
+      log.warn('The persistent browser profile failed during startup; preserving it and retrying with a clean profile.');
+      const backupDir = await archiveFailedBrowserProfile(profileDir);
+      if (!backupDir) {
+        throw new Error(BROWSER_PROFILE_RECOVERY_ERROR);
+      }
+
+      log.warn(`Archived the failed browser profile at ${backupDir}.`);
+      try {
+        const context = await chromium.launchPersistentContext(profileDir, options);
+        log.info('Browser profile recovered successfully.');
+        return context;
+      } catch {
+        throw new Error(BROWSER_PROFILE_RECOVERY_ERROR);
+      }
+    }
+  }
+
+  private async clearLaunchState(): Promise<void> {
+    try {
+      await this.context?.close();
+    } catch {
+      // The failed launch may already have closed its context.
+    }
+    try {
+      await this.browser?.close();
+    } catch {
+      // The failed launch may already have closed its browser.
+    }
+    this.browser = null;
+    this.context = null;
+    this.page = null;
   }
 
   private async navigateToLogin(): Promise<void> {
@@ -128,7 +199,7 @@ export class BlackboardAuth {
 
     try {
       if (this.config.browserType === 'chromium' && this.config.browserProfileDir) {
-        this.context = await chromium.launchPersistentContext(this.config.browserProfileDir, {
+        this.context = await this.launchPersistentContext(this.config.browserProfileDir, {
           ...launchOptions,
           ...contextOptions,
         });
@@ -140,11 +211,13 @@ export class BlackboardAuth {
       }
     } catch (error) {
       if (this.config.browserType !== 'chromium' || !this.config.useSystemEdge) throw error;
+      if (error instanceof Error && error.message === BROWSER_PROFILE_IN_USE_ERROR) throw error;
+      await this.clearLaunchState();
       log.warn('Microsoft Edge could not be launched; falling back to the managed Playwright Chromium.');
       const fallbackExecutable = managedChromiumExecutable();
       if (!fallbackExecutable) throw new Error(AUTOMATION_BROWSER_MISSING_ERROR);
       if (this.config.browserProfileDir) {
-        this.context = await chromium.launchPersistentContext(this.config.browserProfileDir, {
+        this.context = await this.launchPersistentContext(this.config.browserProfileDir, {
           ...contextOptions,
           headless: this.config.headless,
           executablePath: fallbackExecutable,
@@ -261,16 +334,18 @@ export class BlackboardAuth {
    * Close browser
    */
   async close(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-      this.context = null;
-      this.page = null;
-      log.info('Browser closed');
-    } else if (this.context) {
-      await this.context.close();
-      this.context = null;
-      this.page = null;
+    const browser = this.browser;
+    const context = this.context;
+    this.browser = null;
+    this.context = null;
+    this.page = null;
+
+    try {
+      if (browser) await browser.close();
+      else if (context) await context.close();
+      if (browser || context) log.info('Browser closed');
+    } catch (error) {
+      log.warn(`Browser cleanup did not complete: ${errorMessage(error)}`);
     }
   }
 }

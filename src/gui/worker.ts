@@ -31,6 +31,7 @@ let runSummaryContext = {
   downloadDir: './downloads',
 };
 let stdinBuffer = '';
+let commandQueue = Promise.resolve();
 
 function send(message: WorkerOutgoingMessage): void {
   process.stdout.write(JSON.stringify(message) + '\n');
@@ -96,9 +97,10 @@ function writeSummarySafely(report: RunSummaryReport): void {
 }
 
 async function cleanupWorkflow(): Promise<void> {
-  if (!workflow) return;
-  await workflow.cleanup();
+  const activeWorkflow = workflow;
   workflow = null;
+  if (!activeWorkflow) return;
+  await activeWorkflow.cleanup();
 }
 
 async function startWorkflow(payload: WorkerCommandMap['startWorkflow'] = {}): Promise<WorkerResponseMap['startWorkflow']> {
@@ -198,15 +200,16 @@ async function download(payload: WorkerCommandMap['download']): Promise<WorkerRe
   runState.filesSelected = selectedFiles.length;
   runState.instructionCoursesSelected = instructionCourses.length;
   try {
-    const instructionResult = await workflow.downloadSelected(selectedFiles, instructionCourses);
-    runState.instructionsDiscovered = instructionResult.instructionsDiscovered;
-    runState.instructionsDownloaded = instructionResult.instructionsDownloaded;
-    runState.instructionWarnings = instructionResult.instructionWarnings;
-  } catch (error) {
-    const runError = error instanceof Error ? error.message : String(error);
-    writeSummarySafely(buildRunSummaryReport(runError));
-    throw error;
-  }
+    try {
+      const instructionResult = await workflow.downloadSelected(selectedFiles, instructionCourses);
+      runState.instructionsDiscovered = instructionResult.instructionsDiscovered;
+      runState.instructionsDownloaded = instructionResult.instructionsDownloaded;
+      runState.instructionWarnings = instructionResult.instructionWarnings;
+    } catch (error) {
+      const runError = error instanceof Error ? error.message : String(error);
+      writeSummarySafely(buildRunSummaryReport(runError));
+      throw error;
+    }
 
   const summary = {
     coursesDiscovered: runState.coursesDiscovered,
@@ -226,6 +229,9 @@ async function download(payload: WorkerCommandMap['download']): Promise<WorkerRe
   writeSummarySafely(buildRunSummaryReport());
   workflow.emitSummary(summary);
   return summary;
+  } finally {
+    await cleanupWorkflow();
+  }
 }
 
 async function cleanup(): Promise<WorkerResponseMap['cleanup']> {
@@ -284,13 +290,22 @@ async function processLine(line: string): Promise<void> {
   }
 }
 
+function enqueueCommand(line: string): void {
+  commandQueue = commandQueue
+    .catch(() => undefined)
+    .then(() => processLine(line))
+    .catch(error => {
+      sendLog('error', `Worker command failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`);
+    });
+}
+
 process.stdin.setEncoding('utf-8');
 process.stdin.on('data', chunk => {
   stdinBuffer += chunk;
   const lines = stdinBuffer.split('\n');
   stdinBuffer = lines.pop() || '';
   for (const line of lines) {
-    void processLine(line);
+    enqueueCommand(line);
   }
 });
 
