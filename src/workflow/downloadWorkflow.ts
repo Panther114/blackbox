@@ -1,10 +1,7 @@
 import { EventEmitter } from 'events';
-import fs from 'fs';
-import path from 'path';
 import { BlackboxDownloader } from '../index';
-import { Config, Course, DiscoveredFile, FileTree } from '../types';
-import { sanitizeFilename } from '../utils/helpers';
-import { isFileInTree } from '../fileTree';
+import { Config, Course, DiscoveredFile } from '../types';
+import { isDownloadPresent, scanDownloadDirectory } from '../downloadDirectory';
 import { writeManualInstructions } from '../instructions/exporter';
 import { log } from '../utils/logger';
 import {
@@ -16,23 +13,14 @@ import {
 
 function filterAlreadyDownloaded(
   files: DiscoveredFile[],
-  fileTree: FileTree,
+  downloadDir: string,
 ): { files: DiscoveredFile[]; skippedOnDisk: number } {
   const result: DiscoveredFile[] = [];
   let skippedOnDisk = 0;
+  const indexedFiles = scanDownloadDirectory(downloadDir);
 
   for (const file of files) {
-    const sanitized = sanitizeFilename(file.name);
-
-    const inTree =
-      isFileInTree(fileTree, file.courseName, file.sectionName, file.savePath, file.name) ||
-      isFileInTree(fileTree, file.courseName, file.sectionName, file.savePath, sanitized);
-
-    const existsByOriginal = !inTree && fs.existsSync(path.join(file.savePath, file.name));
-    const existsBySanitized =
-      !inTree && sanitized !== file.name && fs.existsSync(path.join(file.savePath, sanitized));
-
-    if (inTree || existsByOriginal || existsBySanitized) {
+    if (isDownloadPresent(indexedFiles, file.savePath, file.name)) {
       skippedOnDisk++;
     } else {
       result.push(file);
@@ -101,7 +89,7 @@ export class DownloadWorkflow extends EventEmitter {
     this.emit('files:discovery:complete', { filesDiscovered: discovered.length });
 
     const enriched = await this.blackboxDownloader.fetchFileMetadata(discovered);
-    const filtered = filterAlreadyDownloaded(enriched, this.blackboxDownloader.getFileTree());
+    const filtered = filterAlreadyDownloaded(enriched, this.config.downloadDir);
     this.emit('files:ready', {
       filesDiscovered: discovered.length,
       filesSelectable: filtered.files.length,
@@ -188,17 +176,23 @@ export class DownloadWorkflow extends EventEmitter {
   }
 
   private filterCourses(courses: Course[], options?: DiscoverCoursesOptions): Course[] {
-    const pattern = options?.filterPattern?.trim();
-    if (!pattern) return courses;
-
-    try {
-      const regex = new RegExp(pattern);
-      return courses.filter(course => regex.test(course.name));
-    } catch {
-      return courses;
-    }
+    return filterCourses(courses, options);
   }
 }
 
-export { filterAlreadyDownloaded };
+function filterCourses(courses: Course[], options?: DiscoverCoursesOptions): Course[] {
+  const pattern = options?.filterPattern?.trim();
+  const excluded = new Set(options?.excludeCourseIds || []);
+  const available = excluded.size > 0 ? courses.filter(course => !excluded.has(course.id)) : courses;
+  if (!pattern) return available;
+
+  try {
+    const regex = new RegExp(pattern);
+    return available.filter(course => regex.test(course.name));
+  } catch {
+    return available;
+  }
+}
+
+export { filterAlreadyDownloaded, filterCourses };
 

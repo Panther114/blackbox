@@ -1,7 +1,7 @@
 /**
  * File-tree cache — a JSON file that mirrors Blackboard's course / section /
- * folder hierarchy.  Used to avoid expensive per-run filesystem scans when
- * checking for already-downloaded files.
+ * folder hierarchy. It is retained as metadata for export and migration; the
+ * current download directory, not this cache, decides whether a file exists.
  *
  * Layout:  <DOWNLOAD_DIR>/file_tree.json
  */

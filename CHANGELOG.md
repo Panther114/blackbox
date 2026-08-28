@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-08-28
+
+### Added
+- Confirmed download-directory clearing from Downloads and Settings.
+- Persistent course blocking controls in Settings.
+
+### Changed
+- Use the current download directory as the source of truth for file skipping, so manually deleted files are downloaded again and changing directories is respected.
+- Move the managed Blackbox skill to the universal `.agents/skills` location for compatible harnesses.
+
 ## [0.8.3] - 2026-04-25
 
 ### Changed

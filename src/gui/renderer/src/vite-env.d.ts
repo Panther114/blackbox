@@ -30,12 +30,14 @@ declare global {
       cleanupWorkflow: () => Promise<{ ok: boolean }>;
       getPaths: () => Promise<{ downloads: string; logs: string; summary: string }>;
       openDownloads: () => Promise<string>;
+      clearDownloads: (payload?: { downloadDir?: string }) => Promise<{ ok: boolean; removed: number; directory: string }>;
       openLogs: () => Promise<string>;
       chooseDownloadDirectory: () => Promise<string | null>;
+      scanCourses: (payload?: Record<string, unknown>) => Promise<Array<{ id: string; name: string; url: string; path: string }>>;
       getAgentStatus: () => Promise<Record<string, unknown>>;
       syncAgent: (payload?: Record<string, unknown>) => Promise<Record<string, unknown>>;
-      installCodexSkill: () => Promise<Record<string, unknown>>;
-      removeCodexSkill: () => Promise<Record<string, unknown>>;
+      installHarnessSkill: () => Promise<Record<string, unknown>>;
+      removeHarnessSkill: () => Promise<Record<string, unknown>>;
       getUpdateState: () => Promise<Record<string, unknown>>;
       checkForUpdates: () => Promise<Record<string, unknown>>;
       downloadUpdate: () => Promise<Record<string, unknown>>;

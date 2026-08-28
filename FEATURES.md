@@ -24,8 +24,10 @@ Blackbox is a branded desktop and CLI downloader for BlackboardChina course mate
 - ✅ Strict document allowlist (`pdf`, `ppt`, `pptx`, `doc`, `docx`, `xls`, `xlsx`)
 - ✅ File extension normalization from MIME when needed (including Blackboard weird extensions like `.aspx`/`.do`)
 - ✅ Blocked-extension rejection (archives/images/media/plain-data) even when MIME looks document-like
-- ✅ Duplicate prevention (database + file tree cache + disk fallback)
-- ✅ Resume behavior across runs
+- ✅ Duplicate prevention from a fresh scan of the configured download directory
+- ✅ Resume behavior across runs, including re-downloading manually deleted files
+- ✅ Persistent course blocking with reversible Settings controls
+- ✅ Confirmed clearing of downloaded files from Downloads and Settings
 - ✅ Byte-based progress percentage when known sizes exist, with secondary file-count display
 - ✅ File-count fallback mode when no known sizes are available
 - ✅ Run summary report output (`logs/latest-summary.txt` + JSON report)

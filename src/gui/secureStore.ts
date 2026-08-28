@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { safeStorage } from 'electron';
 import { AppPaths, getUserConfigRoot } from '../appPaths';
+import { BlockedCourse } from '../types';
 import { readEnvFile } from '../utils/envFile';
 
 export interface DesktopSettings {
@@ -11,6 +12,7 @@ export interface DesktopSettings {
   headless: boolean;
   courseFilter: string;
   autoCheckUpdates: boolean;
+  blockedCourses: BlockedCourse[];
 }
 
 const defaults: DesktopSettings = {
@@ -19,7 +21,24 @@ const defaults: DesktopSettings = {
   headless: true,
   courseFilter: '',
   autoCheckUpdates: true,
+  blockedCourses: [],
 };
+
+export function normalizeBlockedCourses(value: unknown): BlockedCourse[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const normalized: BlockedCourse[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const record = candidate as Record<string, unknown>;
+    const id = typeof record.id === 'string' ? record.id.trim() : '';
+    const name = typeof record.name === 'string' ? record.name.trim() : '';
+    if (!id || !name || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push({ id, name });
+  }
+  return normalized;
+}
 
 function legacyRoots(): string[] {
   const legacyBase = path.join(getUserConfigRoot(), 'whiteboard-downloader');
@@ -87,14 +106,22 @@ export class SecureDesktopStore {
   loadSettings(): DesktopSettings {
     try {
       const parsed = JSON.parse(fs.readFileSync(this.paths.configFile, 'utf8')) as Partial<DesktopSettings>;
-      return { ...defaults, ...parsed };
+      return { ...defaults, ...parsed, blockedCourses: normalizeBlockedCourses(parsed.blockedCourses) };
     } catch {
       return { ...defaults };
     }
   }
 
   saveSettings(settings: Partial<DesktopSettings>): DesktopSettings {
-    const next = { ...this.loadSettings(), ...settings };
+    const current = this.loadSettings();
+    const next = {
+      ...current,
+      ...settings,
+      blockedCourses:
+        settings.blockedCourses === undefined
+          ? current.blockedCourses
+          : normalizeBlockedCourses(settings.blockedCourses),
+    };
     fs.mkdirSync(path.dirname(this.paths.configFile), { recursive: true });
     fs.writeFileSync(this.paths.configFile, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
     return next;
@@ -191,6 +218,7 @@ export class SecureDesktopStore {
           headless: parsed.headless !== false,
           courseFilter: typeof parsed.courseFilter === 'string' ? parsed.courseFilter : '',
           autoCheckUpdates: parsed.autoCheckUpdates !== false,
+          blockedCourses: normalizeBlockedCourses(parsed.blockedCourses),
         });
       } catch {
         // Fall back to the legacy .env file below when settings.json is invalid.
@@ -204,6 +232,7 @@ export class SecureDesktopStore {
         downloadDir: env.DOWNLOAD_DIR || defaults.downloadDir,
         headless: env.HEADLESS !== 'false',
         courseFilter: env.COURSE_FILTER || '',
+        blockedCourses: [],
       });
       if (env.BB_PASSWORD && !legacyCredentials) await this.setPassword(env.BB_PASSWORD);
     }

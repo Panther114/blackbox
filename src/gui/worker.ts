@@ -178,7 +178,10 @@ async function startWorkflow(payload: WorkerCommandMap['startWorkflow'] = {}): P
 
 async function discoverCourses(payload: WorkerCommandMap['discoverCourses'] = {}): Promise<WorkerResponseMap['discoverCourses']> {
   if (!workflow) throw new Error('Workflow not started');
-  const courses = await workflow.discoverCourses({ filterPattern: payload.filterPattern });
+  const courses = await workflow.discoverCourses({
+    filterPattern: payload.filterPattern,
+    excludeCourseIds: payload.excludeCourseIds,
+  });
   runState.coursesDiscovered = courses.length;
   return courses;
 }

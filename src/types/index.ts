@@ -9,6 +9,11 @@ export interface Course {
   path: string;
 }
 
+export interface BlockedCourse {
+  id: string;
+  name: string;
+}
+
 export interface ContentFolder {
   name: string;
   url: string;

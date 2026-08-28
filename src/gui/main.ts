@@ -18,9 +18,11 @@ import {
   WorkerOutgoingMessage,
 } from './workerProtocol';
 import { ensureAppPaths, getAppPaths } from '../appPaths';
-import { SecureDesktopStore } from './secureStore';
+import { SecureDesktopStore, normalizeBlockedCourses } from './secureStore';
 import { checkForUpdates, downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater';
 import { AgentService } from '../agent/service';
+import { DownloadDatabase } from '../database';
+import { clearDownloadDirectory } from '../downloadDirectory';
 
 const WORKER_NATIVE_MODULE_ERROR =
   'GUI worker failed to start because a packaged native dependency could not load. Reinstall the application and run Diagnostics.';
@@ -520,6 +522,7 @@ async function initializeDesktopApp(): Promise<void> {
       headless: settings.headless,
       courseFilter: settings.courseFilter,
       autoCheckUpdates: settings.autoCheckUpdates,
+      blockedCourses: settings.blockedCourses,
     };
   });
 
@@ -532,6 +535,7 @@ async function initializeDesktopApp(): Promise<void> {
       headless: Boolean(payload.headless),
       courseFilter: String(payload.courseFilter || current.courseFilter || ''),
       autoCheckUpdates: payload.autoCheckUpdates === undefined ? current.autoCheckUpdates : Boolean(payload.autoCheckUpdates),
+      blockedCourses: normalizeBlockedCourses(payload.blockedCourses ?? current.blockedCourses),
     });
     const password = String(payload.password || '');
     if (password) await desktopStore.setPassword(password);
@@ -554,7 +558,7 @@ async function initializeDesktopApp(): Promise<void> {
 
   ipcMain.handle('setup:reset', async event => {
     assertTrustedSender(event);
-    desktopStore.saveSettings({ username: '', headless: true, courseFilter: '' });
+    desktopStore.saveSettings({ username: '', headless: true, courseFilter: '', blockedCourses: [] });
     desktopStore.clearPassword();
     await desktopStore.applyToEnvironment();
     return { ok: true };
@@ -578,8 +582,12 @@ async function initializeDesktopApp(): Promise<void> {
 
   ipcMain.handle('workflow:discover-courses', async (event, payload) => {
     assertTrustedSender(event);
+    const blockedCourses = desktopStore.loadSettings().blockedCourses;
     return invokeWorkerCommand('discoverCourses', {
       filterPattern: payload?.filterPattern,
+      excludeCourseIds: payload?.includeBlocked
+        ? []
+        : blockedCourses.map(course => course.id),
     });
   });
 
@@ -620,6 +628,29 @@ async function initializeDesktopApp(): Promise<void> {
     return shell.openPath(path.resolve(config.downloadDir));
   });
 
+  ipcMain.handle('path:clear-downloads', async (event, payload) => {
+    assertTrustedSender(event);
+    await stopGuiWorker();
+    const configured = desktopStore.loadSettings().downloadDir;
+    const requested = typeof payload?.downloadDir === 'string' ? payload.downloadDir.trim() : '';
+    const downloadDir = path.resolve(requested || configured);
+    const removed = clearDownloadDirectory(downloadDir);
+    const config = getConfig();
+    const database = new DownloadDatabase(config.databasePath);
+    try {
+      database.clear();
+    } finally {
+      database.close();
+    }
+    try {
+      fs.rmSync(config.fileTreePath, { force: true });
+    } catch {
+      // The file-tree cache is metadata only; failure to remove it does not
+      // invalidate the files that were cleared from the chosen directory.
+    }
+    return { ok: true, removed, directory: downloadDir };
+  });
+
   ipcMain.handle('path:open-logs', async event => {
     assertTrustedSender(event);
     const config = getConfig();
@@ -638,6 +669,16 @@ async function initializeDesktopApp(): Promise<void> {
     return result.canceled ? null : result.filePaths[0] || null;
   });
 
+  ipcMain.handle('settings:scan-courses', async (event, payload) => {
+    assertTrustedSender(event);
+    return agentService.listCourses({
+      username: typeof payload?.username === 'string' ? payload.username : undefined,
+      password: typeof payload?.password === 'string' ? payload.password : undefined,
+      downloadDir: typeof payload?.downloadDir === 'string' ? payload.downloadDir : undefined,
+      headless: typeof payload?.headless === 'boolean' ? payload.headless : undefined,
+    });
+  });
+
   ipcMain.handle('agent:status', async event => {
     assertTrustedSender(event);
     return agentService.status();
@@ -651,13 +692,13 @@ async function initializeDesktopApp(): Promise<void> {
       outputDir: typeof payload?.outputDir === 'string' ? payload.outputDir : undefined,
     });
   });
-  ipcMain.handle('agent:codex-install', event => {
+  ipcMain.handle('agent:harness-install', event => {
     assertTrustedSender(event);
-    return agentService.installCodexSkill();
+    return agentService.installHarnessSkill();
   });
-  ipcMain.handle('agent:codex-remove', event => {
+  ipcMain.handle('agent:harness-remove', event => {
     assertTrustedSender(event);
-    return agentService.removeCodexSkill();
+    return agentService.removeHarnessSkill();
   });
   ipcMain.handle('update:get-state', event => { assertTrustedSender(event); return getUpdateState(); });
   ipcMain.handle('update:check', async event => { assertTrustedSender(event); return checkForUpdates(); });

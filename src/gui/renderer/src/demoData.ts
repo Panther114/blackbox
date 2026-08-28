@@ -94,8 +94,8 @@ export const DEMO_AGENT_STATUS = {
   configured: true,
   busy: false,
   downloadDir: 'C:\\Users\\demo\\Downloads\\Blackbox',
-  codexInstalled: false,
-  codexSkillPath: 'C:\\Users\\demo\\.codex\\skills\\blackbox',
+  harnessInstalled: false,
+  harnessSkillPath: 'C:\\Users\\demo\\.agents\\skills\\blackbox',
 };
 
 export const DEMO_AGENT_OUTPUT = {
