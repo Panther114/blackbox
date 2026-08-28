@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { toGuiErrorMessage } from '../../errorMessage';
 import {
   DEMO_AGENT_OUTPUT,
@@ -122,17 +122,13 @@ const iconPaths: Record<IconName, React.ReactNode> = {
 const DEMO_MODE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
 const DEMO_SCREEN = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('screen') : null;
 
-function Icon({ name, size = 18, className = '' }: { name: IconName; size?: number; className?: string }) {
+const Icon = React.memo(function Icon({ name, size = 18, className = '' }: { name: IconName; size?: number; className?: string }) {
   return <svg className={`icon ${className}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{iconPaths[name]}</svg>;
-}
+});
 
-function AppIcon({ className = '' }: { className?: string }) {
-  return <svg className={`app-icon ${className}`} viewBox="0 0 48 48" fill="none" aria-hidden="true" focusable="false">
-    <rect x="2" y="2" width="44" height="44" rx="12" fill="#2e60ee" />
-    <path d="M14 11.5h11.2c5.6 0 8.8 2.8 8.8 7.1 0 2.2-1 4-2.9 5.1 2.5 1 3.9 3 3.9 5.6 0 4.8-3.7 7.2-9.6 7.2H14v-25Z" fill="#fff" />
-    <path d="M19 16v16h6.4c2.8 0 4.7-1.1 4.7-3.1s-1.8-3.1-4.7-3.1H19m0 0h5.7c2.5 0 4.1-1 4.1-2.9s-1.6-2.9-4.1-2.9H19" stroke="#2e60ee" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>;
-}
+const AppIcon = React.memo(function AppIcon({ className = '' }: { className?: string }) {
+  return <img className={`app-icon ${className}`} src="./app-icon.svg" alt="" aria-hidden="true" />;
+});
 
 const formatBytes = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -330,13 +326,15 @@ export function App() {
 
   useEffect(() => { if (activeView !== 'settings' || settingsSection !== 'credentials') setShowPassword(false); }, [activeView, settingsSection]);
 
-  const visibleCourses = useMemo(() => courses.filter(course => course.name.toLowerCase().includes(courseSearch.toLowerCase())), [courses, courseSearch]);
+  const deferredCourseSearch = useDeferredValue(courseSearch);
+  const deferredFileSearch = useDeferredValue(fileSearch);
+  const visibleCourses = useMemo(() => courses.filter(course => course.name.toLowerCase().includes(deferredCourseSearch.toLowerCase())), [courses, deferredCourseSearch]);
   const selectableFiles = useMemo(() => files.filter(file => {
     const query = `${file.name} ${file.courseName} ${file.sectionName}`.toLowerCase();
-    if (fileSearch && !query.includes(fileSearch.toLowerCase())) return false;
+    if (deferredFileSearch && !query.includes(deferredFileSearch.toLowerCase())) return false;
     if (typeFilter !== 'all' && (file.fileType || '').toLowerCase() !== typeFilter) return false;
     return true;
-  }), [files, fileSearch, typeFilter]);
+  }), [files, deferredFileSearch, typeFilter]);
   const selectedCourses = courses.filter(course => selectedCourseIds.has(course.id));
   const selectedFiles = files.filter(file => selectedFileUrls.has(file.url));
   const progressPercent = downloadState.totalKnownBytes > 0 ? clampPercent((downloadState.downloadedBytes / downloadState.totalKnownBytes) * 100) : selectedRunFileCount > 0 ? clampPercent(((downloadState.completed + downloadState.skipped) / selectedRunFileCount) * 100) : 0;
@@ -520,9 +518,20 @@ export function App() {
         {activeView === 'download' && stage === 'ready' && !isPreparingDownload && <section className="view"><div className="panel ready-panel"><div className="ready-main"><span className="ready-icon"><AppIcon /></span><div><h2>Ready to download</h2><p>Choose courses, review files, and save documents to your configured folder.</p></div></div><div className="ready-actions"><button className="btn-primary btn-lg" onClick={hasCredentials ? beginDownload : () => { setActiveView('settings'); setSettingsSection('credentials'); }}><Icon name={hasCredentials ? 'download' : 'key'} size={17} />{hasCredentials ? 'Start a download' : 'Open credentials'}</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={17} /> Open downloads</button></div><dl className="ready-meta"><div><dt>Access</dt><dd>{hasCredentials ? 'Credentials ready' : 'Credentials required'}</dd></div><div><dt>Save to</dt><dd className="mono">{paths.downloads || config.downloadDir || '...'}</dd></div></dl></div></section>}
 
         {activeView === 'settings' && <section className="view settings-view"><nav className="settings-tabs" aria-label="Settings sections">{(['credentials', 'diagnostics', 'updates'] as SettingsSection[]).map(section => <button key={section} className={settingsSection === section ? 'is-active' : ''} onClick={() => setSettingsSection(section)}>{section === 'credentials' ? 'Credentials' : section === 'diagnostics' ? 'Diagnostics' : 'Updates'}</button>)}</nav>
-          {settingsSection === 'credentials' && <div className="panel settings-panel" data-testid="credentials-panel"><div className="surface-intro"><div><h2>Account access</h2><p>Stored locally on this machine. Your password is kept in the OS secure store.</p></div><span className={`state-badge ${hasCredentials ? 'state-good' : 'state-warn'}`}>{hasCredentials ? 'Ready' : 'Needs setup'}</span></div><div className="form-grid"><label className="field"><span className="field-label"><Icon name="key" size={14} /> Username / G-number</span><input value={config.username} onChange={event => setConfig(previous => ({ ...previous, username: event.target.value }))} placeholder="g12345678" autoComplete="username" /></label><label className="field"><span className="field-label"><Icon name="lock" size={14} /> Password</span><span className="password-input"><input type={showPassword ? 'text' : 'password'} value={config.password} onFocus={event => { if (config.password === SAVED_PASSWORD_MASK) event.currentTarget.select(); }} onChange={event => { setPasswordStored(false); setPasswordReadable(Boolean(event.target.value)); setPasswordError(''); setConfig(previous => ({ ...previous, password: event.target.value })); }} placeholder="Enter password" autoComplete="current-password" /><button type="button" className="input-action" aria-label={showPassword ? 'Hide password' : 'Show password'} title={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(value => !value)}><Icon name={showPassword ? 'eye-off' : 'eye'} size={17} /></button></span><span className="field-help">{passwordError || (passwordStored ? (passwordReadable ? 'Saved password loaded. It is hidden by default.' : 'A saved password is present but cannot be unlocked on this system. Re-enter it to repair secure storage.') : config.password ? 'Password entered. It is hidden by default.' : 'No password saved yet.')}</span></label><div className="field field-wide"><span className="field-label"><Icon name="folder" size={14} /> Download directory</span><div className="path-editor"><input value={config.downloadDir} onChange={event => setConfig(previous => ({ ...previous, downloadDir: event.target.value }))} /><div className="directory-actions"><button className="btn-secondary" onClick={chooseDownloadDirectory}><Icon name="folder" size={16} /> Choose folder</button><button className="btn-ghost" onClick={openDownloads}><Icon name="open" size={16} /> Open directory</button></div></div><span className="field-help">Files will be saved here. Choose a folder or edit the path, then save settings.</span></div><label className="field"><span className="field-label"><Icon name="monitor" size={14} /> Browser mode</span><select value={config.headless ? 'headless' : 'visible'} onChange={event => setConfig(previous => ({ ...previous, headless: event.target.value === 'headless' }))}><option value="headless">Headless</option><option value="visible">Visible</option></select></label></div><div className="btn-row"><button className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save settings</button><button className="btn-secondary" onClick={() => saveSettings(true)}><Icon name="shield" size={17} /> Save and test login</button><button className="btn-danger" onClick={resetCredentials}><Icon name="refresh" size={17} /> Reset credentials</button></div></div>}
+          {settingsSection === 'credentials' && (
+            <div className="panel settings-panel" data-testid="credentials-panel">
+              <div className="surface-intro"><div><h2>Account access</h2><p>Stored locally on this machine. Your password is kept in the OS secure store.</p></div><span className={`state-badge ${hasCredentials ? 'state-good' : 'state-warn'}`}>{hasCredentials ? 'Ready' : 'Needs setup'}</span></div>
+              <div className="form-grid credentials-form">
+                <label className="field"><span className="field-label"><Icon name="key" size={14} /> Username / G-number</span><input value={config.username} onChange={event => setConfig(previous => ({ ...previous, username: event.target.value }))} placeholder="g12345678" autoComplete="username" /></label>
+                <label className="field"><span className="field-label"><Icon name="lock" size={14} /> Password</span><span className="password-input"><input type={showPassword ? 'text' : 'password'} value={config.password} onFocus={event => { if (config.password === SAVED_PASSWORD_MASK) event.currentTarget.select(); }} onChange={event => { setPasswordStored(false); setPasswordReadable(Boolean(event.target.value)); setPasswordError(''); setConfig(previous => ({ ...previous, password: event.target.value })); }} placeholder="Enter password" autoComplete="current-password" /><button type="button" className="input-action" aria-label={showPassword ? 'Hide password' : 'Show password'} title={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(value => !value)}><Icon name={showPassword ? 'eye-off' : 'eye'} size={17} /></button></span><span className="field-help">{passwordError || (passwordStored ? (passwordReadable ? 'Saved password loaded. It is hidden by default.' : 'A saved password is present but cannot be unlocked on this system. Re-enter it to repair secure storage.') : config.password ? 'Password entered. It is hidden by default.' : 'No password saved yet.')}</span></label>
+                <div className="field field-wide"><span className="field-label"><Icon name="folder" size={14} /> Download directory</span><div className="path-editor"><input data-testid="download-directory-input" value={config.downloadDir} onChange={event => setConfig(previous => ({ ...previous, downloadDir: event.target.value }))} /><div className="directory-actions"><button className="btn-secondary" onClick={chooseDownloadDirectory}><Icon name="folder" size={16} /> Choose folder</button><button className="btn-ghost" onClick={openDownloads}><Icon name="open" size={16} /> Open directory</button></div></div><span className="field-help">Files will be saved here. Choose a folder or edit the path, then save settings.</span></div>
+                <div className="field field-wide"><span id="browser-mode-label" className="field-label"><Icon name="monitor" size={14} /> Browser mode</span><BrowserModeSlider headless={config.headless} onChange={headless => setConfig(previous => ({ ...previous, headless }))} /><span className="field-help">Headless is the default and keeps the browser hidden. Use Visible when you need to watch a Blackboard sign-in or troubleshoot it.</span></div>
+              </div>
+              <div className="btn-row"><button className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save settings</button><button className="btn-secondary" onClick={() => saveSettings(true)}><Icon name="shield" size={17} /> Save and test login</button><button className="btn-danger" onClick={resetCredentials}><Icon name="refresh" size={17} /> Reset credentials</button></div>
+            </div>
+          )}
 
-          {settingsSection === 'diagnostics' && <div className="panel settings-panel" data-testid="diagnostics-panel"><div className="surface-intro"><div><h2>Environment checks</h2><p>Review the local runtime, browser, storage paths, and optional Blackboard reachability.</p></div><span className={`state-badge ${doctorRows.length ? 'state-good' : 'state-neutral'}`}>{doctorRows.length ? `${doctorRows.length} results` : 'Not run'}</span></div><div className="btn-row"><button className="btn-primary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(false)}><Icon name="scan" size={17} /> Run checks</button><button className="btn-secondary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(true)}><Icon name="shield" size={17} /> Run and login test</button></div>{doctorRows.length > 0 ? <ul className="checks">{doctorRows.map((row, index) => <li key={`${row.message}-${index}`} className={`check check-${row.status}`}><span className="check-dot"><Icon name={row.status === 'pass' ? 'check' : row.status === 'warn' ? 'warning' : 'x'} size={13} /></span><span className="check-msg">{row.message}</span>{row.required === false && <span className="check-optional">optional</span>}</li>)}</ul> : <p className="empty-inline">No checks run yet.</p>}</div>}
+          {settingsSection === 'diagnostics' && <div className="panel settings-panel" data-testid="diagnostics-panel"><div className="surface-intro"><div><h2>Environment checks</h2><p>If Blackboard is not working, run a check here to pinpoint what is failing.</p></div><span className={`state-badge ${doctorRows.length ? 'state-good' : 'state-neutral'}`}>{doctorRows.length ? `${doctorRows.length} results` : 'Not run'}</span></div><div className="btn-row"><button className="btn-primary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(false)}><Icon name="scan" size={17} /> Run checks</button><button className="btn-secondary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(true)}><Icon name="shield" size={17} /> Run and login test</button></div>{doctorRows.length > 0 ? <ul className="checks">{doctorRows.map((row, index) => <li key={`${row.message}-${index}`} className={`check check-${row.status}`}><span className="check-dot"><Icon name={row.status === 'pass' ? 'check' : row.status === 'warn' ? 'warning' : 'x'} size={13} /></span><span className="check-msg">{row.message}</span>{row.required === false && <span className="check-optional">optional</span>}</li>)}</ul> : <p className="empty-inline">No checks run yet.</p>}</div>}
 
           {settingsSection === 'updates' && <div className="panel settings-panel" data-testid="updates-panel"><div className="surface-intro"><div><h2>Application updates</h2><p>Keep the desktop app current without interrupting a download.</p></div><span className="state-badge state-neutral">v{version || '...'}</span></div><div className="update-summary"><div><span>Status</span><strong>{String(updateState.status || 'idle')}</strong></div>{updateState.version != null && <div><span>Available</span><strong>{String(updateState.version)}</strong></div>}</div>{updateState.message != null && <p className="inline-message">{String(updateState.message)}</p>}{updateState.status === 'downloading' && <ProgressBar label="Downloading update" value={Number(updateState.percent || 0)} detail={`${Number(updateState.percent || 0).toFixed(0)}%`} />}<label className="toggle-row"><input type="checkbox" checked={config.autoCheckUpdates} onChange={event => setConfig(previous => ({ ...previous, autoCheckUpdates: event.target.checked }))} /><span><strong>Check automatically</strong><small>Look for updates when the app starts.</small></span></label><div className="btn-row"><button className="btn-primary" disabled={updateState.status === 'checking' || updateState.status === 'downloading'} onClick={checkUpdates}><Icon name="refresh" size={17} /> Check now</button><button className="btn-secondary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save preferences</button>{updateState.status === 'available' && <button className="btn-secondary" onClick={downloadAppUpdate}><Icon name="download" size={17} /> Download update</button>}{updateState.status === 'ready' && <button className="btn-secondary" onClick={() => window.blackboxGui.installUpdate()}><Icon name="updates" size={17} /> Restart and install</button>}</div></div>}
         </section>}
@@ -541,6 +550,83 @@ export function App() {
       </main>
     </div>
   );
+}
+
+function BrowserModeSlider({ headless, onChange }: { headless: boolean; onChange: (headless: boolean) => void }) {
+  const sliderRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState(headless ? 0 : 100);
+  const [dragging, setDragging] = useState(false);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const element = sliderRef.current;
+    if (!element) return;
+    const updateWidth = () => setWidth(element.getBoundingClientRect().width);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!dragging) setPosition(headless ? 0 : 100);
+  }, [dragging, headless]);
+
+  const positionFromClientX = (clientX: number): number => {
+    const rect = sliderRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return headless ? 0 : 100;
+    return clampPercent(((clientX - rect.left) / rect.width) * 100);
+  };
+
+  const updateFromClientX = (clientX: number) => {
+    const nextPosition = positionFromClientX(clientX);
+    setPosition(nextPosition);
+    onChange(nextPosition < 50);
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+    updateFromClientX(event.clientX);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragging) updateFromClientX(event.clientX);
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging) return;
+    const finalPosition = positionFromClientX(event.clientX);
+    const finalHeadless = finalPosition < 50;
+    onChange(finalHeadless);
+    setDragging(false);
+    setPosition(finalHeadless ? 0 : 100);
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    let nextHeadless: boolean | null = null;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home') nextHeadless = true;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End') nextHeadless = false;
+    if (nextHeadless === null) return;
+    event.preventDefault();
+    setPosition(nextHeadless ? 0 : 100);
+    onChange(nextHeadless);
+  };
+
+  const segmentWidth = Math.max(0, (width - 10) / 2);
+  const activeLeft = width > 0 ? 5 + (width / 2 - 5) * (position / 100) : undefined;
+  const thumbLeft = width > 0 ? (activeLeft || 5) + segmentWidth - 32 : undefined;
+
+  return <div className="browser-mode-control">
+    <div ref={sliderRef} className="mode-slider" data-mode={headless ? 'headless' : 'visible'} data-dragging={dragging ? 'true' : 'false'} role="slider" tabIndex={0} aria-labelledby="browser-mode-label" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(position)} aria-valuetext={headless ? 'Headless, default' : 'Visible browser'} aria-orientation="horizontal" onKeyDown={handleKeyDown} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={() => setDragging(false)}>
+      <span className="mode-slider-track" aria-hidden="true"><span className="mode-slider-active" style={activeLeft === undefined ? undefined : { left: `${activeLeft}px`, width: `${segmentWidth}px` }} /><span className="mode-slider-thumb" style={thumbLeft === undefined ? undefined : { left: `${thumbLeft}px` }}><Icon name={headless ? 'monitor' : 'eye'} size={16} /></span></span>
+      <span className={`mode-option mode-option-headless ${headless ? 'is-active' : ''}`}><Icon name="monitor" size={16} /><span>Headless <small>(default)</small></span></span>
+      <span className={`mode-option mode-option-visible ${headless ? '' : 'is-active'}`}><Icon name="eye" size={16} /><span>Visible</span></span>
+    </div>
+    <div className="mode-caption"><span>{headless ? 'The browser stays hidden during a run.' : 'The browser window stays visible for troubleshooting.'}</span><strong>{headless ? 'Default' : 'Visible'}</strong></div>
+  </div>;
 }
 
 function ProgressBar({ label, value, detail, subdetail, indeterminate = false, dataTestId }: { label: string; value: number; detail?: string; subdetail?: string; indeterminate?: boolean; dataTestId?: string }) {
