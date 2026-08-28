@@ -17,7 +17,7 @@ export default defineConfig({
   },
   build: {
     outDir: path.resolve(__dirname, 'dist/gui/renderer'),
-    emptyOutDir: false,
+    emptyOutDir: true,
   },
 });
 

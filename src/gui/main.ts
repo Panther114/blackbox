@@ -103,10 +103,7 @@ function appVersion(): string { return app.getVersion(); }
 
 function appIconPath(): string | undefined {
   const candidates = [
-    path.resolve(__dirname, '../../assets/app-icon.ico'),
-    path.resolve(__dirname, '../../assets/app-icon.svg'),
-    path.resolve(__dirname, '../../build/icon.ico'),
-    path.resolve(__dirname, 'renderer/app-icon.ico'),
+    path.resolve(__dirname, '../../assets/app-icon.png'),
   ];
   return candidates.find(candidate => fs.existsSync(candidate)) || undefined;
 }

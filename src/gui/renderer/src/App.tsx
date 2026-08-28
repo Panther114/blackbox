@@ -140,7 +140,7 @@ const Icon = React.memo(function Icon({ name, size = 18, className = '' }: { nam
 });
 
 const AppIcon = React.memo(function AppIcon({ className = '' }: { className?: string }) {
-  return <img className={`app-icon ${className}`} src="./app-icon.svg" alt="" aria-hidden="true" />;
+  return <img className={`app-icon ${className}`} src="./app-icon.png" alt="" aria-hidden="true" />;
 });
 
 const formatBytes = (bytes: number): string => {

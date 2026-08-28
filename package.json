@@ -124,7 +124,7 @@
       "output": "release"
     },
     "win": {
-      "icon": "assets/app-icon.ico",
+      "icon": "assets/app-icon.png",
       "target": [
         "nsis"
       ],
@@ -134,7 +134,7 @@
       }
     },
     "mac": {
-      "icon": "assets/app-icon.svg",
+      "icon": "assets/app-icon.png",
       "target": [
         {
           "target": "dmg",
@@ -154,7 +154,7 @@
       "category": "public.app-category.education"
     },
     "linux": {
-      "icon": "assets/app-icon.svg",
+      "icon": "assets/app-icon.png",
       "target": [
         {
           "target": "AppImage",
