@@ -19,7 +19,7 @@ function errorResult(error: unknown) {
 
 export async function startMcpServer(): Promise<void> {
   const service = new AgentService();
-  const server = new McpServer({ name: 'blackbox', version: '1.0.0' });
+  const server = new McpServer({ name: 'blackbox', version: '1.0.1' });
 
   server.registerTool('blackboard_status', {
     description: 'Return local BlackboardChina downloader readiness. This tool never contacts BlackboardChina or changes data.',

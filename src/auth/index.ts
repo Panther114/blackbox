@@ -62,6 +62,20 @@ const BROWSER_PROFILE_IN_USE_ERROR =
 const BROWSER_PROFILE_RECOVERY_ERROR =
   'The local browser could not start. Close other Blackbox or Chromium windows and retry. If the problem persists, run Diagnostics.';
 
+function isHttpPage(page: Page): boolean {
+  return /^https?:\/\//i.test(page.url());
+}
+
+function isAuthenticatedRedirect(currentUrl: string, loginUrl: string): boolean {
+  try {
+    const current = new URL(currentUrl);
+    const login = new URL(loginUrl);
+    return current.origin === login.origin && current.pathname !== login.pathname;
+  } catch {
+    return false;
+  }
+}
+
 export class BlackboardAuth {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -132,8 +146,102 @@ export class BlackboardAuth {
     this.page = null;
   }
 
+  /**
+   * Blackbox owns its browser profile, but a previous run may have left an
+   * authenticated Blackboard session in it. Clear that session before every
+   * login so a visible run always presents the login form and credentials are
+   * never reused accidentally.
+   */
+  private async clearPersistedSessionState(context: BrowserContext | null = this.context): Promise<void> {
+    if (!context) return;
+
+    try {
+      await context.clearCookies();
+    } catch (error) {
+      log.debug(`Could not clear persisted browser cookies before login: ${errorMessage(error)}`);
+    }
+
+    for (const page of context.pages()) {
+      if (!isHttpPage(page)) continue;
+      try {
+        await page.evaluate(async () => {
+          const browserGlobal = globalThis as unknown as {
+            localStorage?: { clear: () => void };
+            sessionStorage?: { clear: () => void };
+            indexedDB?: {
+              databases?: () => Promise<Array<{ name?: string }>>;
+              deleteDatabase: (name: string) => {
+                onsuccess?: () => void;
+                onerror?: () => void;
+                onblocked?: () => void;
+              };
+            };
+            caches?: {
+              keys: () => Promise<string[]>;
+              delete: (cacheName: string) => Promise<boolean>;
+            };
+            navigator?: {
+              serviceWorker?: {
+                getRegistrations: () => Promise<Array<{ unregister: () => Promise<boolean> }>>;
+              };
+            };
+          };
+
+          try {
+            browserGlobal.localStorage?.clear();
+            browserGlobal.sessionStorage?.clear();
+          } catch {
+            // Some pages expose storage through a restricted origin.
+          }
+
+          try {
+            const indexedDb = browserGlobal.indexedDB;
+            if (indexedDb?.databases) {
+              const databases = await indexedDb.databases();
+              await Promise.all(
+                databases.map(database => {
+                  if (!database.name) return Promise.resolve();
+                  return new Promise<void>(resolve => {
+                    const request = indexedDb.deleteDatabase(database.name as string);
+                    request.onsuccess = resolve;
+                    request.onerror = resolve;
+                    request.onblocked = resolve;
+                  });
+                }),
+              );
+            }
+          } catch {
+            // IndexedDB is optional; cookie and Web Storage cleanup is enough
+            // for the normal Blackboard authentication flow.
+          }
+
+          try {
+            const cacheStorage = browserGlobal.caches;
+            if (cacheStorage) {
+              const cacheNames = await cacheStorage.keys();
+              await Promise.all(cacheNames.map(cacheName => cacheStorage.delete(cacheName)));
+            }
+          } catch {
+            // Cache Storage is optional and may be unavailable in old pages.
+          }
+
+          try {
+            const registrations = await browserGlobal.navigator?.serviceWorker?.getRegistrations();
+            await Promise.all((registrations || []).map(registration => registration.unregister()));
+          } catch {
+            // Service workers are optional; ignore unsupported browser APIs.
+          }
+        });
+      } catch (error) {
+        log.debug(`Could not clear persisted browser storage before login: ${errorMessage(error)}`);
+      }
+    }
+  }
+
   private async navigateToLogin(): Promise<void> {
     if (!this.page) throw new Error('Browser page is unavailable.');
+
+    await this.clearPersistedSessionState();
 
     let navigationError: unknown;
     try {
@@ -160,6 +268,22 @@ export class BlackboardAuth {
         timeout: Math.min(this.config.browserTimeout, LOGIN_FORM_TIMEOUT),
       });
     } catch (error) {
+      // A previously saved auth state can still redirect the first request to
+      // the portal. Clear it once more after that redirect and retry the
+      // login URL so visible mode cannot silently continue from a home page.
+      if (!navigationError && isAuthenticatedRedirect(this.page.url(), this.config.loginUrl)) {
+        log.warn('Blackboard redirected to an authenticated page; clearing the saved session and retrying the login page.');
+        await this.clearPersistedSessionState();
+        await this.page.goto(this.config.loginUrl, {
+          waitUntil: 'commit',
+          timeout: Math.min(this.config.browserTimeout, LOGIN_NAVIGATION_TIMEOUT),
+        });
+        await this.page.waitForSelector('#user_id', {
+          state: 'visible',
+          timeout: Math.min(this.config.browserTimeout, LOGIN_FORM_TIMEOUT),
+        });
+        return;
+      }
       if (navigationError) throw new Error(formatLoginNavigationError(navigationError, this.config.loginUrl));
       throw error;
     }
@@ -336,9 +460,14 @@ export class BlackboardAuth {
   async close(): Promise<void> {
     const browser = this.browser;
     const context = this.context;
-    this.browser = null;
-    this.context = null;
-    this.page = null;
+
+    try {
+      // Do not persist an authenticated Blackboard session in the dedicated
+      // profile. This also makes the next visible run start at login.
+      await this.clearPersistedSessionState(context);
+    } catch (error) {
+      log.debug(`Session cleanup before browser close did not complete: ${errorMessage(error)}`);
+    }
 
     try {
       if (browser) await browser.close();
@@ -346,6 +475,10 @@ export class BlackboardAuth {
       if (browser || context) log.info('Browser closed');
     } catch (error) {
       log.warn(`Browser cleanup did not complete: ${errorMessage(error)}`);
+    } finally {
+      this.browser = null;
+      this.context = null;
+      this.page = null;
     }
   }
 }

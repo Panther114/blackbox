@@ -10,9 +10,9 @@ The developer does not endorse, encourage, or authorize any misuse of this appli
 
 Download the installer for your platform from [GitHub Releases](https://github.com/Panther114/blackbox/releases):
 
-1. **Windows:** run `Blackbox-1.0.0-x64.exe`.
-2. **macOS:** open the `Blackbox-1.0.0-*.dmg` for your Mac architecture and drag Blackbox to Applications.
-3. **Linux:** run the `Blackbox-1.0.0-*.AppImage` (make it executable first), or install the matching `.deb` on Debian/Ubuntu/Mint.
+1. **Windows:** run `Blackbox-1.0.1-x64.exe`.
+2. **macOS:** open the `Blackbox-1.0.1-*.dmg` for your Mac architecture and drag Blackbox to Applications.
+3. **Linux:** run the `Blackbox-1.0.1-*.AppImage` (make it executable first), or install the matching `.deb` on Debian/Ubuntu/Mint.
 4. Launch Blackbox and save your BlackboardChina credentials in Settings.
 
 ### Source fallback
@@ -109,8 +109,8 @@ The installed Blackbox application can use credentials saved in Settings. Config
 For a portable CLI integration on any supported platform, configure `BB_USERNAME`, `BB_PASSWORD`, and `DOWNLOAD_DIR` in the MCP process environment (or a `.env` in its working directory), then use one of:
 
 ```bash
-npx --yes blackbox@1.0.0 mcp
-bunx --bun blackbox@1.0.0 mcp
+npx --yes blackbox@1.0.1 mcp
+bunx --bun blackbox@1.0.1 mcp
 ```
 
 The MCP tools are read-only: `blackboard_status`, `blackboard_list_courses`, `blackboard_sync`, and `blackboard_get_item`. `blackboard_sync` exports Markdown plus a manifest; set `include_files` only when attachments are needed.

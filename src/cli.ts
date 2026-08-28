@@ -101,7 +101,7 @@ program
 program
   .name('blackbox')
   .description('Blackbox downloader for course materials from SHSID BlackboardChina')
-  .version('1.0.0');
+  .version('1.0.1');
 
 function isDebugMode(): boolean {
   return process.env.DEBUG === '1' || process.env.LOG_LEVEL === 'debug';
@@ -460,7 +460,7 @@ program
     let workflow: DownloadWorkflow | null = null;
 
     try {
-      console.log(chalk.bold.cyan('\n🎓 Blackbox v1.0.0\n'));
+      console.log(chalk.bold.cyan('\n🎓 Blackbox v1.0.1\n'));
 
       let username = options.username;
       let password = options.password;

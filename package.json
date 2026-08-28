@@ -1,6 +1,6 @@
 {
   "name": "blackbox",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Blackbox desktop and agent-ready BlackboardChina course-material downloader",
   "main": "dist/gui/main.js",
   "desktopName": "blackbox",

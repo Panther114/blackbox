@@ -10,12 +10,48 @@ import {
   isCorruptCrashpadStartupError,
   isPersistentContextStartupError,
 } from '../src/auth/browserProfile';
+import { BlackboardAuth } from '../src/auth';
+import { Config } from '../src/types';
+import { BrowserContext, Page } from 'playwright-core';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 describe('Blackboard login navigation errors', () => {
   const loginUrl = 'https://shs.blackboardchina.cn/webapps/login/';
+
+  function testConfig(): Config {
+    return {
+      username: 'test-user',
+      password: 'test-password',
+      baseUrl: 'https://shs.blackboardchina.cn',
+      loginUrl,
+      downloadDir: './downloads',
+      maxConcurrentDownloads: 1,
+      downloadTimeout: 1000,
+      browserType: 'chromium',
+      headless: false,
+      browserTimeout: 1000,
+      databasePath: './blackbox.db',
+      logLevel: 'error',
+      logFile: './blackbox.log',
+      maxRetries: 1,
+      retryDelay: 0,
+      fileTreePath: './file_tree.json',
+      browserProfileDir: './browser-profile',
+      useSystemEdge: false,
+    };
+  }
+
+  function attachFakeBrowser(
+    auth: BlackboardAuth,
+    page: Record<string, jest.Mock>,
+    context: Record<string, jest.Mock | (() => Page[])>,
+  ): void {
+    const authState = auth as unknown as { page: Page | null; context: BrowserContext | null };
+    authState.page = page as unknown as Page;
+    authState.context = context as unknown as BrowserContext;
+  }
 
   it('treats a goto timeout as recoverable and user-facing', () => {
     const error = new Error('page.goto: Timeout 30000ms exceeded. waiting until "commit"');
@@ -39,6 +75,62 @@ describe('Blackboard login navigation errors', () => {
     expect(isPersistentContextStartupError(new Error('page.goto: Timeout 30000ms exceeded'))).toBe(false);
     expect(isPersistentContextStartupError(new Error("browserType.launchPersistentContext: Executable doesn't exist"))).toBe(false);
     expect(isCorruptCrashpadStartupError(new Error('crashpad Settings version is not 1'))).toBe(true);
+  });
+
+  it('clears a saved session before filling credentials in visible mode', async () => {
+    const config = testConfig();
+    const page = {
+      url: jest.fn().mockReturnValue('https://shs.blackboardchina.cn/webapps/portal/'),
+      evaluate: jest.fn().mockResolvedValue(undefined),
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue(undefined),
+      locator: jest.fn().mockReturnValue({ first: () => ({ isVisible: jest.fn().mockResolvedValue(false) }) }),
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn().mockResolvedValue(undefined),
+      waitForLoadState: jest.fn().mockResolvedValue(undefined),
+    };
+    const context = {
+      clearCookies: jest.fn().mockResolvedValue(undefined),
+      pages: jest.fn().mockReturnValue([page]),
+    };
+    const auth = new BlackboardAuth(config);
+    attachFakeBrowser(auth, page, context);
+
+    await auth.login();
+
+    expect(context.clearCookies).toHaveBeenCalledTimes(1);
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
+    expect(page.goto).toHaveBeenCalledWith(loginUrl, expect.objectContaining({ waitUntil: 'commit' }));
+    expect(page.fill).toHaveBeenNthCalledWith(1, '#user_id', config.username);
+    expect(page.fill).toHaveBeenNthCalledWith(2, '#password', config.password);
+  });
+
+  it('retries the login URL if a saved session redirects to the portal', async () => {
+    const config = testConfig();
+    const page = {
+      url: jest.fn().mockReturnValue('https://shs.blackboardchina.cn/webapps/portal/'),
+      evaluate: jest.fn().mockResolvedValue(undefined),
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn()
+        .mockRejectedValueOnce(new Error('Timed out waiting for #user_id'))
+        .mockResolvedValue(undefined),
+      locator: jest.fn().mockReturnValue({ first: () => ({ isVisible: jest.fn().mockResolvedValue(false) }) }),
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn().mockResolvedValue(undefined),
+      waitForLoadState: jest.fn().mockResolvedValue(undefined),
+    };
+    const context = {
+      clearCookies: jest.fn().mockResolvedValue(undefined),
+      pages: jest.fn().mockReturnValue([page]),
+    };
+    const auth = new BlackboardAuth(config);
+    attachFakeBrowser(auth, page, context);
+
+    await auth.login();
+
+    expect(context.clearCookies).toHaveBeenCalledTimes(2);
+    expect(page.goto).toHaveBeenCalledTimes(2);
+    expect(page.goto).toHaveBeenNthCalledWith(2, loginUrl, expect.objectContaining({ waitUntil: 'commit' }));
   });
 
   it('archives only disposable Crashpad state before a full profile reset', async () => {
