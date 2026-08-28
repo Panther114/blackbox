@@ -1,4 +1,5 @@
-import { collectDownloadCandidates, RawContentLink } from '../src/scraper';
+import { Page } from 'playwright-core';
+import { BlackboardScraper, collectDownloadCandidates, RawContentLink } from '../src/scraper';
 
 const BASE_URL = 'https://shs.blackboardchina.cn';
 const SAVE_PATH = '/tmp/downloads';
@@ -16,6 +17,23 @@ function link(overrides: Partial<RawContentLink>): RawContentLink {
 }
 
 describe('scraper candidate collection', () => {
+  it('keeps announcements when content links are also present', async () => {
+    const page = {
+      goto: jest.fn(async () => undefined),
+      waitForSelector: jest.fn(async () => undefined),
+      $$eval: jest.fn(async () => [
+        { href: '/webapps/blackboard/content/listContent.jsp?course_id=1', title: 'Course Content', text: '' },
+        { href: '/webapps/blackboard/execute/announcement?course_id=1', title: 'Announcements', text: '' },
+      ]),
+      url: () => 'https://shs.blackboardchina.cn/course',
+    } as unknown as Page;
+    const scraper = new BlackboardScraper(page, { baseUrl: BASE_URL, browserTimeout: 1000 } as any);
+
+    const links = await scraper.getSidebarLinks('https://shs.blackboardchina.cn/course', { includeAnnouncements: true });
+
+    expect(links.map(link => link.title)).toEqual(['Course Content', 'Announcements']);
+  });
+
   it('deduplicates URLs and keeps valid document candidates', () => {
     const results = collectDownloadCandidates(
       [

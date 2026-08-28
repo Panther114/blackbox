@@ -5,7 +5,14 @@ import { BlackboxDownloader } from '../index';
 import { Config, Course, DiscoveredFile, FileTree } from '../types';
 import { sanitizeFilename } from '../utils/helpers';
 import { isFileInTree } from '../fileTree';
-import { WorkflowSummary, DiscoverCoursesOptions, DiscoverFilesResult } from './types';
+import { writeManualInstructions } from '../instructions/exporter';
+import { log } from '../utils/logger';
+import {
+  WorkflowSummary,
+  DiscoverCoursesOptions,
+  DiscoverFilesResult,
+  InstructionDownloadResult,
+} from './types';
 
 function filterAlreadyDownloaded(
   files: DiscoveredFile[],
@@ -104,11 +111,57 @@ export class DownloadWorkflow extends EventEmitter {
     };
   }
 
-  async downloadSelected(files: DiscoveredFile[]): Promise<void> {
+  async downloadSelected(
+    files: DiscoveredFile[],
+    instructionCourses: Course[] = [],
+  ): Promise<InstructionDownloadResult> {
     if (!this.blackboxDownloader) {
       throw new Error('Workflow not initialized. Call initialize() first.');
     }
-    await this.blackboxDownloader.downloadSelected(files);
+
+    const instructionResult: InstructionDownloadResult = {
+      instructionCoursesSelected: instructionCourses.length,
+      instructionsDiscovered: 0,
+      instructionsDownloaded: 0,
+      instructionWarnings: [],
+    };
+
+    if (instructionCourses.length > 0) {
+      this.emit('instructions:discovery:start', { courseCount: instructionCourses.length });
+      const discovered = await this.blackboxDownloader.discoverInstructions(instructionCourses, progress => {
+        this.emit('instructions:discovery:progress', progress);
+      });
+      instructionResult.instructionsDiscovered = discovered.items.length;
+      instructionResult.instructionWarnings.push(...discovered.warnings);
+      this.emit('instructions:discovery:complete', {
+        instructionsDiscovered: discovered.items.length,
+        warnings: discovered.warnings,
+      });
+
+      this.emit('instructions:write:start', { instructionsDiscovered: discovered.items.length });
+      const written = writeManualInstructions({
+        outputDir: this.config.downloadDir,
+        courses: instructionCourses,
+        items: discovered.items,
+        onProgress: progress => this.emit('instructions:write:progress', progress),
+      });
+      instructionResult.instructionsDownloaded = written.written;
+      instructionResult.instructionWarnings.push(...written.warnings);
+      this.emit('instructions:write:complete', {
+        instructionsDownloaded: written.written,
+        warnings: written.warnings,
+      });
+    }
+
+    if (files.length > 0) {
+      await this.blackboxDownloader.downloadSelected(files);
+    } else if (instructionCourses.length === 0) {
+      log.warn('No files or course instructions selected');
+    } else {
+      log.info(`Saved ${instructionResult.instructionsDownloaded} course instruction files`);
+    }
+
+    return instructionResult;
   }
 
   getDownloader(): BlackboxDownloader {

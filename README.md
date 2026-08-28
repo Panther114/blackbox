@@ -33,7 +33,7 @@ If you prefer to run from source, install Node.js **22.x or 24.x** manually, the
    - (first run may take longer while dependencies/build/Playwright install complete)
    - if install is interrupted, rerunning launcher repairs incomplete `node_modules`
 4. Enter BlackboardChina credentials once in setup.
-5. Select courses/files in TUI/GUI checkboxes.
+5. Select courses/files in TUI/GUI checkboxes. After the file scan, optionally include all readable instructions and text for each selected course.
 6. On future runs, double-click the same launcher again.
 
 See [README-USER.md](README-USER.md) for short student instructions.
@@ -87,6 +87,10 @@ http://127.0.0.1:5173/?demo=1&screen=diagnostics
 
 The seeded states use local fixture data only. The normal download path remains network-backed and is not invoked by the demo.
 
+## Manual course instructions
+
+The GUI manual downloader keeps file attachment selection and course text selection separate. After files are scanned, enable the checkbox for each course whose readable instructions, assignment details, announcements, and other text should be saved. There are no individual instruction toggles: an included course is scraped completely. The text is written as Markdown under `<DOWNLOAD_DIR>/<course>/Instructions/`, while selected document files keep their normal download paths. Instruction-only runs are supported.
+
 ## Agent and MCP integration
 
 The installed Blackbox application can use credentials saved in Settings. Configure an MCP client to start its installed executable with `--mcp`:
@@ -127,6 +131,7 @@ Extension normalization behavior:
 - Download progress percentage is byte-based when file sizes are known.
 - File count remains visible as secondary progress.
 - If no known sizes are available, progress falls back to clearly labeled file-count mode.
+- Manual course-text runs show separate discovery and Markdown-write progress, including items found and items saved.
 
 ## Reports and logs
 

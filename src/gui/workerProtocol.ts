@@ -24,6 +24,7 @@ export interface WorkerCommandMap {
   };
   download: {
     files: DiscoveredFile[];
+    instructionCourses?: Course[];
   };
   cleanup: Record<string, never>;
   shutdown: Record<string, never>;

@@ -67,6 +67,10 @@ export const DEMO_SUMMARY = {
   filesDownloaded: 58,
   filesSkipped: 9,
   filesFailed: 5,
+  instructionCoursesSelected: 9,
+  instructionsDiscovered: 42,
+  instructionsDownloaded: 42,
+  instructionWarnings: [],
   failedFiles: [
     { name: 'Week 04 - Required articles and annotated bibliography.pdf', reason: 'Server did not return the file body' },
     { name: 'Week 07 - Workshop data set and analysis template.xlsx', reason: 'Timed out after 3 attempts' },

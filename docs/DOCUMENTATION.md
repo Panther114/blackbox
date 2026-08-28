@@ -7,6 +7,7 @@ Blackbox is a BlackboardChina course-material downloader. The product brand is B
 - `scripts/bootstrap.js`: shared bootstrap logic used by launchers (`npm run bootstrap`)
 - `src/cli.ts`: commands (`setup`, `config-check`, `download`, `doctor`, `config`)
 - `src/workflow/downloadWorkflow.ts`: shared download workflow used by TUI and GUI
+- `src/instructions/exporter.ts`: course-scoped Markdown writer for the manual instruction/text option
 - `src/gui/main.ts` + `src/gui/preload.ts` + `src/gui/renderer/`: desktop GUI entry points
 
 ## Setup and launch flow
@@ -50,6 +51,10 @@ Blackbox is a BlackboardChina course-material downloader. The product brand is B
 - MIME-to-extension mapping normalizes names lacking valid suffixes
 - Unsupported extensions are rejected
 - Validation remains strict via `src/utils/fileValidation.ts`
+
+## Manual instruction/text download
+
+The GUI first discovers files for the selected courses, then presents one instruction checkbox per course. Selecting a course enables a complete read-only content scan using `BlackboardScraper.getContentItems()` for content pages, nested folders, and announcements. Individual content items are intentionally not exposed as separate controls. `DownloadWorkflow.downloadSelected(files, instructionCourses)` runs the content scan, emits discovery/write progress events, writes Markdown to `<DOWNLOAD_DIR>/<course>/Instructions/<section>/...`, and then downloads the independently selected document files. An instruction-only run is valid.
 
 ## User-facing errors and reports
 

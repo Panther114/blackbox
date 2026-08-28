@@ -594,6 +594,7 @@ async function initializeDesktopApp(): Promise<void> {
     assertTrustedSender(event);
     return invokeWorkerCommand('download', {
       files: payload?.files || [],
+      instructionCourses: payload?.instructionCourses || [],
     });
   });
 

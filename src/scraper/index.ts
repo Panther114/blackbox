@@ -324,7 +324,16 @@ export class BlackboardScraper {
     }
 
     const contentLike = candidates.filter(link => isContentLike(link.title));
-    const links = contentLike.length > 0 ? contentLike : candidates;
+    const announcementLinks = options?.includeAnnouncements === true
+      ? candidates.filter(link => /announcement|å…¬å‘Š/i.test(link.title))
+      : [];
+    const prioritized = contentLike.length > 0 ? [...contentLike, ...announcementLinks] : candidates;
+    const seenUrls = new Set<string>();
+    const links = prioritized.filter(link => {
+      if (seenUrls.has(link.url)) return false;
+      seenUrls.add(link.url);
+      return true;
+    });
 
     log.debug(`Found ${links.length} sidebar links (after filtering)`);
     return links;

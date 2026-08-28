@@ -18,6 +18,10 @@ let runState = {
   filesDownloaded: 0,
   filesSkipped: 0,
   filesFailed: 0,
+  instructionCoursesSelected: 0,
+  instructionsDiscovered: 0,
+  instructionsDownloaded: 0,
+  instructionWarnings: [] as string[],
   skippedOnDisk: 0,
   failedFiles: [] as Array<{ name: string; reason: string }>,
 };
@@ -49,6 +53,10 @@ function resetRunState(): void {
     filesDownloaded: 0,
     filesSkipped: 0,
     filesFailed: 0,
+    instructionCoursesSelected: 0,
+    instructionsDiscovered: 0,
+    instructionsDownloaded: 0,
+    instructionWarnings: [],
     skippedOnDisk: 0,
     failedFiles: [],
   };
@@ -66,6 +74,10 @@ function buildRunSummaryReport(runError?: string): RunSummaryReport {
     filesSkipped: runState.filesSkipped + runState.skippedOnDisk,
     filesFailed: runState.filesFailed,
     failedFiles: runState.failedFiles,
+    instructionCoursesSelected: runState.instructionCoursesSelected,
+    instructionsDiscovered: runState.instructionsDiscovered,
+    instructionsDownloaded: runState.instructionsDownloaded,
+    instructionWarnings: runState.instructionWarnings,
     logFilePath: runSummaryContext.logFilePath,
     downloadDir: runSummaryContext.downloadDir,
     runError,
@@ -129,6 +141,12 @@ async function startWorkflow(payload: WorkerCommandMap['startWorkflow'] = {}): P
     'files:metadata:progress',
     'files:metadata:complete',
     'files:ready',
+    'instructions:discovery:start',
+    'instructions:discovery:progress',
+    'instructions:discovery:complete',
+    'instructions:write:start',
+    'instructions:write:progress',
+    'instructions:write:complete',
     'download:start',
     'download:progress',
     'download:complete',
@@ -176,9 +194,14 @@ async function discoverFiles(payload: WorkerCommandMap['discoverFiles']): Promis
 async function download(payload: WorkerCommandMap['download']): Promise<WorkerResponseMap['download']> {
   if (!workflow) throw new Error('Workflow not started');
   const selectedFiles = payload?.files || [];
+  const instructionCourses = payload?.instructionCourses || [];
   runState.filesSelected = selectedFiles.length;
+  runState.instructionCoursesSelected = instructionCourses.length;
   try {
-    await workflow.downloadSelected(selectedFiles);
+    const instructionResult = await workflow.downloadSelected(selectedFiles, instructionCourses);
+    runState.instructionsDiscovered = instructionResult.instructionsDiscovered;
+    runState.instructionsDownloaded = instructionResult.instructionsDownloaded;
+    runState.instructionWarnings = instructionResult.instructionWarnings;
   } catch (error) {
     const runError = error instanceof Error ? error.message : String(error);
     writeSummarySafely(buildRunSummaryReport(runError));
@@ -194,6 +217,10 @@ async function download(payload: WorkerCommandMap['download']): Promise<WorkerRe
     filesSkipped: runState.filesSkipped + runState.skippedOnDisk,
     filesFailed: runState.filesFailed,
     failedFiles: runState.failedFiles,
+    instructionCoursesSelected: runState.instructionCoursesSelected,
+    instructionsDiscovered: runState.instructionsDiscovered,
+    instructionsDownloaded: runState.instructionsDownloaded,
+    instructionWarnings: runState.instructionWarnings,
   };
 
   writeSummarySafely(buildRunSummaryReport());

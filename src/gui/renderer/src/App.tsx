@@ -32,6 +32,10 @@ type Summary = {
   filesSkipped: number;
   filesFailed: number;
   failedFiles: Array<{ name: string; reason: string }>;
+  instructionCoursesSelected: number;
+  instructionsDiscovered: number;
+  instructionsDownloaded: number;
+  instructionWarnings: string[];
 };
 type PreparationProgress = { completed: number; total: number; label: string };
 type DiscoveryProgress = {
@@ -43,6 +47,15 @@ type DiscoveryProgress = {
   currentFile?: string;
   filesFound?: number;
   accepted?: number;
+};
+type InstructionProgress = {
+  phase: 'discovery' | 'write';
+  completed: number;
+  total: number;
+  currentCourse?: string;
+  currentSection?: string;
+  currentTitle?: string;
+  itemsFound?: number;
 };
 type DiagnosticsProgress = {
   running: boolean;
@@ -146,6 +159,7 @@ const eta = (seconds: number): string => {
 
 const clampPercent = (value: number): number => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+const demoInstructionCount = (courseCount: number): number => courseCount > 0 ? Math.max(courseCount, Math.round((courseCount * 42) / 9)) : 0;
 const WIZARD_STEPS = ['Courses', 'Files', 'Download', 'Summary'] as const;
 const wizardStepIndex = (stage: DownloadStage): number => stage === 'courses' ? 0 : stage === 'files' ? 1 : stage === 'download' ? 2 : stage === 'summary' ? 3 : -1;
 const SAVED_PASSWORD_MASK = '••••••••';
@@ -185,6 +199,7 @@ export function App() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [courseSearch, setCourseSearch] = useState('');
   const [selectedCourseIds, setSelectedCourseIds] = useState<Set<string>>(new Set());
+  const [selectedInstructionCourseIds, setSelectedInstructionCourseIds] = useState<Set<string>>(new Set());
   const [files, setFiles] = useState<DiscoveredFile[]>([]);
   const [fileSearch, setFileSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -195,6 +210,8 @@ export function App() {
   const [perUrlDownloaded, setPerUrlDownloaded] = useState<Map<string, number>>(new Map());
   const [speedWindow, setSpeedWindow] = useState({ lastTs: Date.now(), bytes: 0 });
   const [selectedRunFileCount, setSelectedRunFileCount] = useState(0);
+  const [selectedRunInstructionCourseCount, setSelectedRunInstructionCourseCount] = useState(0);
+  const [instructionProgress, setInstructionProgress] = useState<InstructionProgress | null>(null);
   const [agentInfo, setAgentInfo] = useState<Record<string, unknown> | null>(null);
   const [agentOutput, setAgentOutput] = useState<Record<string, unknown> | null>(null);
   const [updateState, setUpdateState] = useState<Record<string, unknown>>({ status: 'idle' });
@@ -217,18 +234,18 @@ export function App() {
       setUpdateState({ status: 'idle', message: 'You are on the latest version.' });
 
       if (DEMO_SCREEN === 'courses' || DEMO_SCREEN === 'course-list') {
-        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setStage('courses');
+        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setStage('courses');
       } else if (DEMO_SCREEN === 'scan' || DEMO_SCREEN === 'scanning') {
-        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setStage('courses'); setIsScanningCourses(true);
+        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setStage('courses'); setIsScanningCourses(true);
         setDiscoveryProgress({ phase: 'courses', completed: 7, total: DEMO_COURSES.length, currentCourse: DEMO_COURSES[7].name, currentSection: 'Course Materials', filesFound: 34 });
       } else if (DEMO_SCREEN === 'metadata' || DEMO_SCREEN === 'file-details') {
-        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setStage('courses'); setIsScanningCourses(true);
+        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setStage('courses'); setIsScanningCourses(true);
         setDiscoveryProgress({ phase: 'metadata', completed: 41, total: DEMO_FILES.length, currentFile: DEMO_FILES[41].name, filesFound: DEMO_FILES.length });
       } else if (DEMO_SCREEN === 'files') {
-        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.slice(0, 9).map(course => course.id))); setFiles(DEMO_FILES); setSelectedFileUrls(new Set(DEMO_FILES.map(file => file.url))); setStage('files');
+        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.slice(0, 9).map(course => course.id))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.slice(0, 9).map(course => course.id))); setFiles(DEMO_FILES); setSelectedFileUrls(new Set(DEMO_FILES.map(file => file.url))); setStage('files');
       } else if (DEMO_SCREEN === 'download') {
         const totalKnownBytes = DEMO_FILES.reduce((total, file) => total + (file.size || 0), 0);
-        setFiles(DEMO_FILES); setSelectedFileUrls(new Set(DEMO_FILES.map(file => file.url))); setSelectedRunFileCount(DEMO_FILES.length);
+        setFiles(DEMO_FILES); setSelectedFileUrls(new Set(DEMO_FILES.map(file => file.url))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.slice(0, 9).map(course => course.id))); setSelectedRunFileCount(DEMO_FILES.length); setSelectedRunInstructionCourseCount(9); setInstructionProgress({ phase: 'write', completed: 24, total: demoInstructionCount(9), currentCourse: DEMO_COURSES[5].name, currentSection: 'Course Materials', currentTitle: 'Midterm study guide and assessment criteria' });
         setDownloadState({ completed: 31, failed: 1, skipped: 4, downloadedBytes: Math.round(totalKnownBytes * 0.48), totalKnownBytes, unknownCount: 0, speed: 1_820_000, currentFile: DEMO_FILES[35].name }); setStage('download');
       } else if (DEMO_SCREEN === 'summary') {
         setSummary(DEMO_SUMMARY); setStage('summary');
@@ -272,6 +289,11 @@ export function App() {
       if (evt.type === 'files:discovery:progress') setDiscoveryProgress({ phase: payload.phase === 'metadata' ? 'metadata' : 'courses', completed: Number(payload.completed || 0), total: Number(payload.total || 0), currentCourse: String(payload.currentCourse || ''), currentSection: String(payload.currentSection || ''), filesFound: Number(payload.filesFound || 0) });
       if (evt.type === 'files:metadata:progress') setDiscoveryProgress({ phase: 'metadata', completed: Number(payload.completed || 0), total: Number(payload.total || 0), currentFile: String(payload.currentFile || ''), filesFound: Number(payload.total || 0) });
       if (evt.type === 'files:ready') setDiscoveryProgress(null);
+      if (evt.type === 'instructions:discovery:start') setInstructionProgress({ phase: 'discovery', completed: 0, total: Number(payload.courseCount || selectedCourseIds.size || 0), itemsFound: 0 });
+      if (evt.type === 'instructions:discovery:progress') setInstructionProgress({ phase: 'discovery', completed: Number(payload.completed || 0), total: Number(payload.total || 0), currentCourse: String(payload.currentCourse || ''), currentSection: String(payload.currentSection || ''), itemsFound: Number(payload.itemsFound || 0) });
+      if (evt.type === 'instructions:write:start') setInstructionProgress(previous => ({ phase: 'write', completed: 0, total: Number(payload.instructionsDiscovered || 0), currentCourse: '', currentSection: '', currentTitle: '' }));
+      if (evt.type === 'instructions:write:progress') setInstructionProgress({ phase: 'write', completed: Number(payload.completed || 0), total: Number(payload.total || 0), currentCourse: String(payload.currentCourse || ''), currentSection: String(payload.currentSection || ''), currentTitle: String(payload.currentTitle || '') });
+      if (evt.type === 'instructions:write:complete') setInstructionProgress(previous => previous ? { ...previous, completed: previous.total, currentTitle: 'Instructions saved' } : previous);
       if (evt.type === 'download:start') {
         const url = String(payload.url || '');
         if (selectedRunUrlSetRef.current.has(url)) setDownloadState(previous => ({ ...previous, currentFile: String(payload.name || payload.filename || '') }));
@@ -336,11 +358,17 @@ export function App() {
     return true;
   }), [files, deferredFileSearch, typeFilter]);
   const selectedCourses = courses.filter(course => selectedCourseIds.has(course.id));
+  const selectedInstructionCourses = selectedCourses.filter(course => selectedInstructionCourseIds.has(course.id));
   const selectedFiles = files.filter(file => selectedFileUrls.has(file.url));
   const progressPercent = downloadState.totalKnownBytes > 0 ? clampPercent((downloadState.downloadedBytes / downloadState.totalKnownBytes) * 100) : selectedRunFileCount > 0 ? clampPercent(((downloadState.completed + downloadState.skipped) / selectedRunFileCount) * 100) : 0;
   const remainingKnownBytes = Math.max(0, downloadState.totalKnownBytes - downloadState.downloadedBytes);
   const countProgress = downloadState.completed + downloadState.skipped;
   const discoveryPercent = discoveryProgress && discoveryProgress.total > 0 ? clampPercent((discoveryProgress.completed / discoveryProgress.total) * 100) : 0;
+  const instructionPercent = instructionProgress
+    ? instructionProgress.total > 0
+      ? clampPercent((instructionProgress.completed / instructionProgress.total) * 100)
+      : 100
+    : 0;
   const diagnosticsPercent = diagnosticsProgress && diagnosticsProgress.total > 0 ? clampPercent((diagnosticsProgress.completed / diagnosticsProgress.total) * 100) : 0;
 
   function toggleFileSelection(url: string) {
@@ -368,9 +396,9 @@ export function App() {
   }
 
   async function runDemoPreparation() {
-    setIsPreparingDownload(true); setStage('ready'); setPreparationProgress({ completed: 0, total: 3, label: 'Connecting to Blackboard (offline demo)' }); setStatus('Simulating a Blackboard session. No network request will be made.');
+    setIsPreparingDownload(true); setStage('ready'); setSummary(null); setInstructionProgress(null); setSelectedRunInstructionCourseCount(0); setPreparationProgress({ completed: 0, total: 3, label: 'Connecting to Blackboard (offline demo)' }); setStatus('Simulating a Blackboard session. No network request will be made.');
     await delay(650); setPreparationProgress({ completed: 1, total: 3, label: 'Loading your course list' }); await delay(550); setPreparationProgress({ completed: 2, total: 3, label: 'Indexing available courses' }); await delay(750);
-    setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus(''); setPreparationProgress(null); setIsPreparingDownload(false);
+    setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus(''); setPreparationProgress(null); setIsPreparingDownload(false);
   }
 
   async function startFlow() {
@@ -383,7 +411,7 @@ export function App() {
       await window.blackboxGui.workflowStart({ username: config.username || undefined, password: config.password || undefined, downloadDir: config.downloadDir, headless: config.headless });
       setPreparationProgress({ completed: 1, total: 3, label: 'Loading your course list' });
       const discovered = await window.blackboxGui.discoverCourses();
-      setCourses(discovered); setSelectedCourseIds(new Set(discovered.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus('');
+      setCourses(discovered); setSelectedCourseIds(new Set(discovered.map(course => course.id))); setSelectedInstructionCourseIds(new Set(discovered.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus('');
     });
     setIsPreparingDownload(false); setPreparationProgress(null);
   }
@@ -398,7 +426,7 @@ export function App() {
     for (let index = 0; index < DEMO_FILES.length; index += 1) {
       await delay(13); setDiscoveryProgress({ phase: 'metadata', completed: index + 1, total: DEMO_FILES.length, currentFile: DEMO_FILES[index].name, filesFound: DEMO_FILES.length });
     }
-    setFiles(DEMO_FILES); setSelectedFileUrls(new Set(DEMO_FILES.map(file => file.url))); setKnownByUrl(new Map(DEMO_FILES.map(file => [file.url, file.size || 0]))); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' }); setSelectedRunFileCount(0); setDiscoveryProgress(null); setStage('files'); setIsScanningCourses(false);
+    setFiles(DEMO_FILES); setSelectedFileUrls(new Set(DEMO_FILES.map(file => file.url))); setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id))); setKnownByUrl(new Map(DEMO_FILES.map(file => [file.url, file.size || 0]))); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' }); setSelectedRunFileCount(0); setSelectedRunInstructionCourseCount(0); setInstructionProgress(null); setDiscoveryProgress(null); setStage('files'); setIsScanningCourses(false);
   }
 
   async function runScanFiles() {
@@ -409,30 +437,84 @@ export function App() {
       try {
         setDiscoveryProgress({ phase: 'courses', completed: 0, total: selectedCourses.length, filesFound: 0 }); setStatus('Scanning selected courses for files...');
         const result = (await window.blackboxGui.discoverFiles(selectedCourses)) as { files: DiscoveredFile[] };
-        setFiles(result.files); setSelectedFileUrls(new Set(result.files.map(file => file.url)));
+        setFiles(result.files); setSelectedFileUrls(new Set(result.files.map(file => file.url))); setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id)));
         const known = new Map<string, number>(); for (const file of result.files) if (typeof file.size === 'number') known.set(file.url, file.size); setKnownByUrl(known);
-        setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' }); setPerUrlDownloaded(new Map()); setSelectedRunFileCount(0); selectedRunUrlSetRef.current = new Set(); selectedRunKnownByUrlRef.current = new Map(); setDiscoveryProgress(null); setStage('files'); setStatus('');
+        setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' }); setPerUrlDownloaded(new Map()); setSelectedRunFileCount(0); setSelectedRunInstructionCourseCount(0); setInstructionProgress(null); selectedRunUrlSetRef.current = new Set(); selectedRunKnownByUrlRef.current = new Map(); setDiscoveryProgress(null); setStage('files'); setStatus('');
       } finally { setIsScanningCourses(false); }
     });
     setIsScanningCourses(false);
   }
 
-  async function runDemoDownload(runFiles: DiscoveredFile[]) {
+  async function runDemoDownload(runFiles: DiscoveredFile[], instructionCourses: Course[]) {
     const totalKnownBytes = runFiles.reduce((total, file) => total + (file.size || 0), 0);
-    selectedRunUrlSetRef.current = new Set(runFiles.map(file => file.url)); selectedRunKnownByUrlRef.current = new Map(runFiles.map(file => [file.url, file.size || 0])); setSelectedRunFileCount(runFiles.length); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: 0, speed: 1_820_000, currentFile: '' }); setStage('download'); setStatus('');
-    for (let index = 0; index < runFiles.length; index += 1) { await delay(75); const completed = index + 1; setDownloadState(previous => ({ ...previous, completed, downloadedBytes: Math.round((totalKnownBytes * completed) / runFiles.length), currentFile: runFiles[index].name })); }
-    await delay(250); setSummary({ ...DEMO_SUMMARY, filesSelected: runFiles.length, filesDownloaded: Math.max(0, runFiles.length - 7) }); setStage('summary');
+    const instructionTotal = demoInstructionCount(instructionCourses.length);
+    const filesFailed = Math.min(DEMO_SUMMARY.filesFailed, runFiles.length);
+    const filesSkipped = Math.min(DEMO_SUMMARY.filesSkipped, Math.max(0, runFiles.length - filesFailed));
+    const filesDownloaded = Math.max(0, runFiles.length - filesFailed - filesSkipped);
+
+    selectedRunUrlSetRef.current = new Set(runFiles.map(file => file.url));
+    selectedRunKnownByUrlRef.current = new Map(runFiles.map(file => [file.url, file.size || 0]));
+    setSelectedRunFileCount(runFiles.length);
+    setSelectedRunInstructionCourseCount(instructionCourses.length);
+    setPerUrlDownloaded(new Map());
+    setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: 0, speed: 1_820_000, currentFile: '' });
+    setInstructionProgress(instructionCourses.length > 0 ? { phase: 'discovery', completed: 0, total: instructionCourses.length, itemsFound: 0 } : null);
+    setStage('download');
+    setStatus('');
+
+    for (let index = 0; index < instructionCourses.length; index += 1) {
+      await delay(80);
+      setInstructionProgress({
+        phase: 'discovery',
+        completed: index + 1,
+        total: instructionCourses.length,
+        currentCourse: instructionCourses[index].name,
+        currentSection: index % 2 === 0 ? 'Course Materials' : 'Assessment Resources',
+        itemsFound: instructionTotal > 0 ? Math.round((instructionTotal * (index + 1)) / instructionCourses.length) : 0,
+      });
+    }
+
+    setInstructionProgress(instructionCourses.length > 0 ? { phase: 'write', completed: 0, total: instructionTotal } : null);
+    for (let index = 0; index < instructionTotal; index += 1) {
+      await delay(16);
+      const course = instructionCourses[index % instructionCourses.length];
+      setInstructionProgress({ phase: 'write', completed: index + 1, total: instructionTotal, currentCourse: course.name, currentSection: 'Course Materials', currentTitle: `Instruction item ${index + 1}` });
+    }
+    if (instructionCourses.length > 0) setInstructionProgress({ phase: 'write', completed: instructionTotal, total: instructionTotal, currentTitle: 'All course instructions saved' });
+
+    for (let index = 0; index < runFiles.length; index += 1) {
+      await delay(75);
+      const completed = index + 1;
+      setDownloadState(previous => ({ ...previous, completed, downloadedBytes: runFiles.length > 0 ? Math.round((totalKnownBytes * completed) / runFiles.length) : 0, currentFile: runFiles[index].name }));
+    }
+
+    await delay(250);
+    setSummary({
+      ...DEMO_SUMMARY,
+      coursesSelected: selectedCourses.length,
+      filesSelected: runFiles.length,
+      filesDownloaded,
+      filesSkipped,
+      filesFailed,
+      failedFiles: DEMO_SUMMARY.failedFiles.slice(0, filesFailed),
+      instructionCoursesSelected: instructionCourses.length,
+      instructionsDiscovered: instructionTotal,
+      instructionsDownloaded: instructionTotal,
+      instructionWarnings: [],
+    });
+    setStage('summary');
   }
 
   async function startDownload() {
-    if (selectedFiles.length === 0) return;
+    if (selectedFiles.length === 0 && selectedInstructionCourses.length === 0) return;
     setActiveView('download'); setErrorMessage('');
-    if (DEMO_MODE) { await runDemoDownload(selectedFiles); return; }
+    if (DEMO_MODE) { await runDemoDownload(selectedFiles, selectedInstructionCourses); return; }
     await runWithUiError(async () => {
       const runSelectedFiles = [...selectedFiles]; const selectedKnownByUrl = new Map<string, number>();
       for (const file of runSelectedFiles) { const knownSize = knownByUrl.get(file.url); if (typeof knownSize === 'number') selectedKnownByUrl.set(file.url, knownSize); else if (typeof file.size === 'number') selectedKnownByUrl.set(file.url, file.size); }
-      const totalKnownBytes = Array.from(selectedKnownByUrl.values()).reduce((total, size) => total + size, 0); selectedRunUrlSetRef.current = new Set(runSelectedFiles.map(file => file.url)); selectedRunKnownByUrlRef.current = selectedKnownByUrl; setSelectedRunFileCount(runSelectedFiles.length); setPerUrlDownloaded(new Map()); setSpeedWindow({ lastTs: Date.now(), bytes: 0 }); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: runSelectedFiles.length - selectedKnownByUrl.size, speed: 0, currentFile: '' }); setStatus(''); setStage('download');
-      const result = (await window.blackboxGui.downloadFiles(runSelectedFiles)) as Summary; setSummary(result); setStage('summary');
+      const runInstructionCourses = [...selectedInstructionCourses];
+      const totalKnownBytes = Array.from(selectedKnownByUrl.values()).reduce((total, size) => total + size, 0); selectedRunUrlSetRef.current = new Set(runSelectedFiles.map(file => file.url)); selectedRunKnownByUrlRef.current = selectedKnownByUrl; setSelectedRunFileCount(runSelectedFiles.length); setSelectedRunInstructionCourseCount(runInstructionCourses.length); setPerUrlDownloaded(new Map()); setSpeedWindow({ lastTs: Date.now(), bytes: 0 }); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: runSelectedFiles.length - selectedKnownByUrl.size, speed: 0, currentFile: '' }); setInstructionProgress(runInstructionCourses.length > 0 ? { phase: 'discovery', completed: 0, total: runInstructionCourses.length, itemsFound: 0 } : null); setStatus(''); setStage('download');
+      const result = (await window.blackboxGui.downloadFiles(runSelectedFiles, runInstructionCourses)) as Summary; setSummary(result); setStage('summary');
     });
   }
 
@@ -541,15 +623,63 @@ export function App() {
         {activeView === 'download' && (stage === 'courses' || stage === 'files' || stage === 'download' || stage === 'summary') && <section className="view download-view"><Stepper current={wizardStepIndex(stage)} />
           {stage === 'courses' && <div className="panel selection-panel" data-testid="course-list-panel"><div className="selection-head"><div><h2>Choose courses</h2><p>Select the courses to scan for files.</p></div><CountSummary items={[`${visibleCourses.length} shown`, `${selectedCourseIds.size} selected`, `${courses.length} total`]} /></div>{isScanningCourses && discoveryProgress && <ProgressBar label={discoveryProgress.phase === 'metadata' ? 'Reading file details' : 'Scanning course content'} value={discoveryPercent} detail={`${discoveryProgress.completed} / ${discoveryProgress.total}`} subdetail={discoveryProgress.currentSection || discoveryProgress.currentCourse || 'Working through the selected courses'} dataTestId="discovery-progress" />}<div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter courses" value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label><div className="btn-row btn-row-inline"><button className="btn-secondary" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set(courses.map(course => course.id)))}><Icon name="check-square" size={16} /> Select all</button><button className="btn-ghost" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set())}><Icon name="x" size={16} /> Clear</button><button className="btn-primary" disabled={selectedCourses.length === 0 || isScanningCourses} onClick={runScanFiles}><Icon name="scan" size={16} className={isScanningCourses ? 'is-spinning' : ''} /> {isScanningCourses ? 'Scanning...' : 'Scan selected'}</button></div></div><div className="list" aria-busy={isScanningCourses}>{visibleCourses.map((course, index) => { const selected = selectedCourseIds.has(course.id); return <label key={course.id} className={`list-row ${selected ? 'is-selected' : ''}`} title={course.name}><input type="checkbox" checked={selected} disabled={isScanningCourses} onChange={event => setSelectedCourseIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(course.id); else next.delete(course.id); return next; })} /><span className="list-index">{String(index + 1).padStart(2, '0')}</span><span className="list-name">{course.name}</span><span className={`list-state ${selected ? 'is-on' : ''}`}>{selected ? 'Selected' : 'Skipped'}</span></label>; })}{visibleCourses.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No courses found</strong><span>{courses.length ? 'Try a different search.' : 'Start a download to discover courses.'}</span></div>}</div></div>}
 
-          {stage === 'files' && <div className="panel selection-panel" data-testid="file-list-panel"><div className="selection-head"><div><h2>Choose files</h2><p>Review the files found in your selected courses.</p></div><CountSummary items={[`${selectableFiles.length} shown`, `${selectedFileUrls.size} selected`, `${files.length} total`]} /></div><div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter files" value={fileSearch} onChange={event => setFileSearch(event.target.value)} /></label><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">All types</option>{fileTypes.map(type => <option key={type} value={type}>{type.toUpperCase()}</option>)}</select><div className="btn-row btn-row-inline"><button className="btn-secondary" onClick={() => setSelectedFileUrls(new Set(files.map(file => file.url)))}><Icon name="check-square" size={16} /> Select all</button><button className="btn-ghost" onClick={() => setSelectedFileUrls(new Set())}><Icon name="x" size={16} /> Clear</button><button className="btn-primary" disabled={selectedFiles.length === 0} onClick={startDownload}><Icon name="download" size={16} /> Download {selectedFiles.length || ''}</button></div></div><div className="table"><div className="table-head"><span /><span>Name</span><span>Type</span><span>Size</span><span>Course / section</span><span>State</span></div>{selectableFiles.map(file => { const selected = selectedFileUrls.has(file.url); return <div className={`table-row selectable ${selected ? 'is-on' : ''}`} key={file.url} role="checkbox" aria-checked={selected} tabIndex={0} onClick={() => toggleFileSelection(file.url)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleFileSelection(file.url); } }}><span><input type="checkbox" checked={selected} onClick={event => event.stopPropagation()} onChange={() => toggleFileSelection(file.url)} /></span><span className="file-name"><Icon name="file" size={15} /><span className="ellipsis">{file.name}</span></span><span>{(file.fileType || '?').toUpperCase()}</span><span>{file.size ? formatBytes(file.size) : '?'}</span><span className="ellipsis">{file.courseName} / {file.sectionName}</span><span className={`tag ${selected ? 'tag-on' : 'tag-off'}`}>{selected ? 'Selected' : 'Ignored'}</span></div>; })}{selectableFiles.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No files found</strong><span>{files.length ? 'Try a different search or type.' : 'Scan selected courses to find files.'}</span></div>}</div></div>}
+          {stage === 'files' && (
+            <div className="panel selection-panel" data-testid="file-list-panel">
+              <div className="selection-head"><div><h2>Choose files</h2><p>Review files and choose which courses also include instructional text.</p></div><CountSummary items={[`${selectableFiles.length} shown`, `${selectedFileUrls.size} selected`, `${files.length} total`]} /></div>
+              <CourseInstructionPicker courses={selectedCourses} selectedIds={selectedInstructionCourseIds} onToggle={courseId => setSelectedInstructionCourseIds(previous => { const next = new Set(previous); if (next.has(courseId)) next.delete(courseId); else next.add(courseId); return next; })} onSelectAll={() => setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id)))} onClear={() => setSelectedInstructionCourseIds(new Set())} />
+              <div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter files" value={fileSearch} onChange={event => setFileSearch(event.target.value)} /></label><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">All types</option>{fileTypes.map(type => <option key={type} value={type}>{type.toUpperCase()}</option>)}</select><div className="btn-row btn-row-inline"><button className="btn-secondary" onClick={() => setSelectedFileUrls(new Set(files.map(file => file.url)))}><Icon name="check-square" size={16} /> Select all files</button><button className="btn-ghost" onClick={() => setSelectedFileUrls(new Set())}><Icon name="x" size={16} /> Clear files</button><button className="btn-primary" data-testid="download-selected" disabled={selectedFiles.length === 0 && selectedInstructionCourses.length === 0} onClick={startDownload}><Icon name="download" size={16} /> {selectedFiles.length > 0 && selectedInstructionCourses.length > 0 ? `Download ${selectedFiles.length} + text` : selectedFiles.length > 0 ? `Download ${selectedFiles.length}` : 'Download instructions'}</button></div></div>
+              <div className="table"><div className="table-head"><span /><span>Name</span><span>Type</span><span>Size</span><span>Course / section</span><span>State</span></div>{selectableFiles.map(file => { const selected = selectedFileUrls.has(file.url); return <div className={`table-row selectable ${selected ? 'is-on' : ''}`} key={file.url} role="checkbox" aria-checked={selected} tabIndex={0} onClick={() => toggleFileSelection(file.url)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleFileSelection(file.url); } }}><span><input type="checkbox" checked={selected} onClick={event => event.stopPropagation()} onChange={() => toggleFileSelection(file.url)} /></span><span className="file-name"><Icon name="file" size={15} /><span className="ellipsis">{file.name}</span></span><span>{(file.fileType || '?').toUpperCase()}</span><span>{file.size ? formatBytes(file.size) : '?'}</span><span className="ellipsis">{file.courseName} / {file.sectionName}</span><span className={`tag ${selected ? 'tag-on' : 'tag-off'}`}>{selected ? 'Selected' : 'Ignored'}</span></div>; })}{selectableFiles.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No files found</strong><span>{files.length ? 'Try a different search or type.' : 'Scan selected courses to find files.'}</span></div>}</div>
+            </div>
+          )}
 
-          {stage === 'download' && <div className="panel transfer-panel" data-testid="transfer-panel"><div className="transfer-head"><div><span className="transfer-status"><span className="live-dot" /> Live transfer</span><h2>Downloading selected files</h2><p>Files are being saved to your chosen folder.</p></div><div className="queue-stat"><strong>{selectedRunFileCount}</strong><span>queued</span></div></div><ProgressBar label="Overall progress" value={progressPercent} detail={downloadState.totalKnownBytes > 0 ? `${formatBytes(downloadState.downloadedBytes)} / ${formatBytes(downloadState.totalKnownBytes)}` : `${countProgress} / ${selectedRunFileCount} files`} subdetail={downloadState.failed ? `${downloadState.failed} failed` : 'Transfer in progress'} dataTestId="transfer-progress" /><div className="progress-readout"><strong>{progressPercent.toFixed(1)}%</strong><span>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : 'Calculating speed...'}</span></div><div className="download-stats"><div className="download-stat"><span className="download-stat-icon"><Icon name="gauge" size={17} /></span><span><small>Speed</small><strong>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : '?'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="clock" size={17} /></span><span><small>Estimated time</small><strong>{downloadState.speed > 0 && downloadState.totalKnownBytes > 0 ? eta(remainingKnownBytes / downloadState.speed) : '?'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="file" size={17} /></span><span><small>Unknown size</small><strong>{downloadState.unknownCount}</strong></span></div></div><div className="current-file"><span className="current-file-icon"><Icon name="file" size={17} /></span><span className="current-file-label">Currently saving</span><span className="download-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong className="current-file-name">{downloadState.currentFile || 'Waiting for the first file...'}</strong></div><div className="tallies"><span className="tally tally-ok"><Icon name="check-circle" size={14} /> {downloadState.completed} done</span><span className="tally tally-skip"><Icon name="clock" size={14} /> {downloadState.skipped} skipped</span><span className="tally tally-fail"><Icon name="x-circle" size={14} /> {downloadState.failed} failed</span></div><div className="btn-row download-footer"><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</button><button className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</button></div></div>}
+          {stage === 'download' && (
+            <div className="panel transfer-panel" data-testid="transfer-panel">
+              <div className="transfer-head"><div><span className="transfer-status"><span className="live-dot" /> Live transfer</span><h2>{selectedRunFileCount > 0 ? 'Downloading selected content' : 'Saving course instructions'}</h2><p>{selectedRunFileCount > 0 ? 'Files and course text are being saved to your chosen folder.' : 'Every readable item in the included courses is being saved as Markdown.'}</p></div><div className="transfer-queue"><div className="queue-stat"><strong>{selectedRunFileCount}</strong><span>files queued</span></div>{selectedRunInstructionCourseCount > 0 && <div className="queue-stat queue-stat-instructions"><strong>{selectedRunInstructionCourseCount}</strong><span>courses with text</span></div>}</div></div>
+              {selectedRunInstructionCourseCount > 0 && instructionProgress && <ProgressBar label={instructionProgress.phase === 'write' ? 'Saving course instructions' : 'Reading course instructions'} value={instructionPercent} detail={instructionProgress.phase === 'write' ? `${instructionProgress.completed} / ${instructionProgress.total} saved` : `${instructionProgress.itemsFound || 0} items found`} subdetail={instructionProgress.currentTitle || instructionProgress.currentSection || instructionProgress.currentCourse || 'Reading every selected course'} dataTestId="instruction-progress" />}
+              {selectedRunFileCount > 0 ? <><ProgressBar label="Overall file progress" value={progressPercent} detail={downloadState.totalKnownBytes > 0 ? `${formatBytes(downloadState.downloadedBytes)} / ${formatBytes(downloadState.totalKnownBytes)}` : `${countProgress} / ${selectedRunFileCount} files`} subdetail={downloadState.failed ? `${downloadState.failed} failed` : 'Transfer in progress'} dataTestId="transfer-progress" /><div className="progress-readout"><strong>{progressPercent.toFixed(1)}%</strong><span>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : 'Calculating speed...'}</span></div><div className="download-stats"><div className="download-stat"><span className="download-stat-icon"><Icon name="gauge" size={17} /></span><span><small>Speed</small><strong>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : '?'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="clock" size={17} /></span><span><small>Estimated time</small><strong>{downloadState.speed > 0 && downloadState.totalKnownBytes > 0 ? eta(remainingKnownBytes / downloadState.speed) : '?'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="file" size={17} /></span><span><small>Unknown size</small><strong>{downloadState.unknownCount}</strong></span></div></div><div className="current-file"><span className="current-file-icon"><Icon name="file" size={17} /></span><span className="current-file-label">Currently saving</span><span className="download-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong className="current-file-name">{downloadState.currentFile || 'Waiting for the first file...'}</strong></div><div className="tallies"><span className="tally tally-ok"><Icon name="check-circle" size={14} /> {downloadState.completed} done</span><span className="tally tally-skip"><Icon name="clock" size={14} /> {downloadState.skipped} skipped</span><span className="tally tally-fail"><Icon name="x-circle" size={14} /> {downloadState.failed} failed</span></div></> : <div className="instruction-only-note"><span className="download-stat-icon"><Icon name="book" size={17} /></span><span><strong>No file attachments selected</strong><small>The course instructions continue independently and will be saved as Markdown.</small></span></div>}
+              <div className="btn-row download-footer"><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</button><button className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</button></div>
+            </div>
+          )}
 
-          {stage === 'summary' && summary && <div className="panel summary-panel"><div className="surface-intro"><div><h2>Download complete</h2><p>Here is the result of this read-only download run.</p></div><span className="state-badge state-good">Finished</span></div><div className="summary-grid"><div><span>Courses scanned</span><strong>{summary.coursesSelected}</strong></div><div><span>Files found</span><strong>{summary.filesDiscovered}</strong></div><div><span>Downloaded</span><strong className="text-good">{summary.filesDownloaded}</strong></div><div><span>Skipped</span><strong className="text-warn">{summary.filesSkipped}</strong></div><div><span>Failed</span><strong className="text-bad">{summary.filesFailed}</strong></div></div>{summary.failedFiles.length > 0 && <ul className="checks">{summary.failedFiles.map(file => <li key={`${file.name}-${file.reason}`} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{file.name}: {file.reason}</span></li>)}</ul>}<div className="btn-row"><button className="btn-primary" onClick={beginDownload}><Icon name="refresh" size={16} /> Run again</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</button><button className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</button></div></div>}
+          {stage === 'summary' && summary && <div className="panel summary-panel"><div className="surface-intro"><div><h2>Download complete</h2><p>Files and course instructions were saved in this read-only run.</p></div><span className="state-badge state-good">Finished</span></div><div className="summary-grid"><div><span>Courses scanned</span><strong>{summary.coursesSelected}</strong></div><div><span>Files found</span><strong>{summary.filesDiscovered}</strong></div><div><span>Downloaded</span><strong className="text-good">{summary.filesDownloaded}</strong></div><div><span>Skipped</span><strong className="text-warn">{summary.filesSkipped}</strong></div><div><span>Failed</span><strong className="text-bad">{summary.filesFailed}</strong></div><div><span>Instruction courses</span><strong>{summary.instructionCoursesSelected}</strong></div><div><span>Instructions saved</span><strong className="text-good">{summary.instructionsDownloaded}</strong></div><div><span>Text discovered</span><strong>{summary.instructionsDiscovered}</strong></div></div>{summary.failedFiles.length > 0 && <ul className="checks">{summary.failedFiles.map(file => <li key={`${file.name}-${file.reason}`} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{file.name}: {file.reason}</span></li>)}</ul>}{summary.instructionWarnings.length > 0 && <ul className="checks">{summary.instructionWarnings.map(warning => <li key={warning} className="check check-warn"><span className="check-dot"><Icon name="warning" size={13} /></span><span className="check-msg">{warning}</span></li>)}</ul>}<div className="btn-row"><button className="btn-primary" onClick={beginDownload}><Icon name="refresh" size={16} /> Run again</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</button><button className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</button></div></div>}
         </section>}
       </main>
     </div>
   );
+}
+
+function CourseInstructionPicker({
+  courses,
+  selectedIds,
+  onToggle,
+  onSelectAll,
+  onClear,
+}: {
+  courses: Course[];
+  selectedIds: Set<string>;
+  onToggle: (courseId: string) => void;
+  onSelectAll: () => void;
+  onClear: () => void;
+}) {
+  return <section className="instruction-picker" data-testid="instruction-picker">
+    <div className="instruction-picker-head">
+      <div><span className="instruction-eyebrow"><Icon name="book" size={14} /> Course-level text</span><h3>Include instructions and text</h3><p>Save every readable instruction, assignment, announcement, and text item for the included courses. Individual items are included automatically.</p></div>
+      <CountSummary items={[`${selectedIds.size} included`, `${courses.length} courses`]} />
+    </div>
+    <div className="instruction-course-list">
+      {courses.map(course => {
+        const selected = selectedIds.has(course.id);
+        return <label key={course.id} className={`instruction-course-row ${selected ? 'is-selected' : ''}`} title={course.name}>
+          <input type="checkbox" data-testid={`instruction-course-${course.id}`} checked={selected} onChange={() => onToggle(course.id)} />
+          <span className="instruction-course-icon"><Icon name="book" size={16} /></span>
+          <span className="instruction-course-copy"><strong className="ellipsis">{course.name}</strong><small>All readable course content</small></span>
+          <span className={`instruction-course-state ${selected ? 'is-on' : ''}`}>{selected ? 'Included' : 'Skipped'}</span>
+        </label>;
+      })}
+      {courses.length === 0 && <div className="empty-inline">Select at least one course to include its instructions.</div>}
+    </div>
+    <div className="instruction-picker-footer"><span>{selectedIds.size > 0 ? `${selectedIds.size} course${selectedIds.size === 1 ? '' : 's'} will be scraped completely.` : 'No course instructions selected.'}</span><div className="btn-row btn-row-inline"><button className="btn-ghost btn-compact" onClick={onSelectAll} disabled={courses.length === 0}>Include all</button><button className="btn-ghost btn-compact" onClick={onClear} disabled={selectedIds.size === 0}>Clear</button></div></div>
+  </section>;
 }
 
 function BrowserModeSlider({ headless, onChange }: { headless: boolean; onChange: (headless: boolean) => void }) {

@@ -7,6 +7,13 @@ export interface DiscoverFilesResult {
   skippedOnDisk: number;
 }
 
+export interface InstructionDownloadResult {
+  instructionCoursesSelected: number;
+  instructionsDiscovered: number;
+  instructionsDownloaded: number;
+  instructionWarnings: string[];
+}
+
 export interface WorkflowSummary {
   coursesDiscovered: number;
   coursesSelected: number;
@@ -16,6 +23,10 @@ export interface WorkflowSummary {
   filesSkipped: number;
   filesFailed: number;
   failedFiles: Array<{ name: string; reason: string }>;
+  instructionCoursesSelected: number;
+  instructionsDiscovered: number;
+  instructionsDownloaded: number;
+  instructionWarnings: string[];
 }
 
 export interface DiscoverCoursesOptions {

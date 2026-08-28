@@ -25,6 +25,7 @@ declare global {
           size?: number;
           fileType?: string;
         }>,
+        instructionCourses?: Array<{ id: string; name: string; url: string; path: string }>,
       ) => Promise<Record<string, unknown>>;
       cleanupWorkflow: () => Promise<{ ok: boolean }>;
       getPaths: () => Promise<{ downloads: string; logs: string; summary: string }>;

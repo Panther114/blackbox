@@ -13,7 +13,7 @@ For the simplest setup, download the installer for your platform from [GitHub Re
    - Blackboard username / G-number
    - Blackboard password
    - Download folder
-5. Select courses and files in the checkbox screens (TUI) or GUI screens.
+5. Select courses and files in the checkbox screens (TUI) or GUI screens. In the GUI, you can then include all readable instructions and text for selected courses with one checkbox per course.
 
 > The packaged installers include the desktop runtime and automation browser. BlackboardChina itself must still be reachable when you run a real login or download.
 
@@ -31,6 +31,8 @@ You can change this in setup.
 Use the same launcher file again. Setup is reused automatically. If install fails midway, rerun the launcher and bootstrap will repair incomplete dependencies.
 
 During downloads, percentage is byte-based when sizes are known; file count remains visible as secondary progress.
+
+When course text is enabled, Blackbox saves every readable instruction, assignment, announcement, and text item as Markdown in that course's `Instructions` folder. Text is selected by course, not by individual item.
 
 ## Reset setup
 

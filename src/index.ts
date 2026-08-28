@@ -1,6 +1,15 @@
 import path from 'path';
 import { EventEmitter } from 'events';
-import { AgentAttachment, Config, ContentItem, Course, DiscoveredFile, DownloadableFile, FileTree } from './types';
+import {
+  AgentAttachment,
+  Config,
+  ContentItem,
+  Course,
+  DiscoveredFile,
+  DownloadableFile,
+  FileTree,
+  InstructionDiscoveryProgress,
+} from './types';
 import { BlackboardAuth } from './auth';
 import { BlackboardScraper } from './scraper';
 import { FileDownloader } from './downloader';
@@ -221,7 +230,7 @@ export class BlackboxDownloader extends EventEmitter {
             warnings.push(`Could not open ${course.name} / ${link.title}`);
             continue;
           }
-          const found = await this.discoverAgentFolder(course, link.title, [], includeInstructions, 0);
+          const found = await this.discoverContentFolder(course, link.title, [], includeInstructions, true, 0);
           items.push(...found.items);
           files.push(...found.files);
         }
@@ -246,18 +255,91 @@ export class BlackboxDownloader extends EventEmitter {
     return { items, files, attachments, warnings };
   }
 
-  private async discoverAgentFolder(
+  /**
+   * Read every readable content item for the selected courses. This shares the
+   * same announcement/content extraction path as agent mode but deliberately
+   * skips attachment discovery so manual file selection remains independent.
+   */
+  async discoverInstructions(
+    courses: Course[],
+    onProgress?: (progress: InstructionDiscoveryProgress) => void,
+  ): Promise<{ items: ContentItem[]; warnings: string[] }> {
+    if (!this.scraper) throw new Error('Not initialized. Call initialize() first.');
+
+    const items: ContentItem[] = [];
+    const warnings: string[] = [];
+    onProgress?.({ phase: 'courses', completed: 0, total: courses.length, currentCourse: '', currentSection: '', itemsFound: 0 });
+
+    for (let courseIndex = 0; courseIndex < courses.length; courseIndex += 1) {
+      const course = courses[courseIndex];
+      try {
+        const links = await this.scraper.getSidebarLinks(course.url, { includeAnnouncements: true });
+        onProgress?.({
+          phase: 'courses',
+          completed: courseIndex,
+          total: courses.length,
+          currentCourse: course.name,
+          currentSection: '',
+          itemsFound: items.length,
+        });
+
+        for (const link of links) {
+          onProgress?.({
+            phase: 'sections',
+            completed: courseIndex,
+            total: courses.length,
+            currentCourse: course.name,
+            currentSection: link.title,
+            itemsFound: items.length,
+          });
+
+          if (!(await this.scraper.navigateTo(link.url))) {
+            warnings.push(`Could not open ${course.name} / ${link.title}`);
+            continue;
+          }
+
+          const found = await this.discoverContentFolder(course, link.title, [], true, false, 0);
+          items.push(...found.items);
+          onProgress?.({
+            phase: 'sections',
+            completed: courseIndex,
+            total: courses.length,
+            currentCourse: course.name,
+            currentSection: link.title,
+            itemsFound: items.length,
+          });
+        }
+        await this.scraper.returnToHome();
+      } catch (error) {
+        warnings.push(`Could not scan ${course.name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      onProgress?.({
+        phase: 'courses',
+        completed: courseIndex + 1,
+        total: courses.length,
+        currentCourse: course.name,
+        currentSection: '',
+        itemsFound: items.length,
+      });
+    }
+
+    return { items, warnings };
+  }
+
+  private async discoverContentFolder(
     course: Course,
     sectionName: string,
     folderPath: string[],
     includeInstructions: boolean,
+    includeFiles: boolean,
     depth: number,
   ): Promise<{ items: ContentItem[]; files: DiscoveredFile[] }> {
     if (!this.scraper || depth >= MAX_DISCOVER_DEPTH) return { items: [], files: [] };
     const currentPath = path.join(this.config.downloadDir, course.path, sanitizeFilename(sectionName), ...folderPath.map(sanitizeFilename));
-    ensureDirectory(currentPath);
+    if (includeFiles) ensureDirectory(currentPath);
     const items = includeInstructions ? await this.scraper.getContentItems(course, sectionName, folderPath) : [];
-    const rawFiles = await this.scraper.getDownloadableFiles(currentPath);
+    const rawFiles = includeFiles ? await this.scraper.getDownloadableFiles(currentPath) : [];
     const files: DiscoveredFile[] = rawFiles.map(file => ({
       name: file.name,
       url: file.url,
@@ -272,7 +354,7 @@ export class BlackboxDownloader extends EventEmitter {
     const folders = await this.scraper.getSubfolders(currentPath);
     for (const folder of folders) {
       if (!(await this.scraper.navigateTo(folder.url))) continue;
-      const nested = await this.discoverAgentFolder(course, sectionName, [...folderPath, folder.name], includeInstructions, depth + 1);
+      const nested = await this.discoverContentFolder(course, sectionName, [...folderPath, folder.name], includeInstructions, includeFiles, depth + 1);
       items.push(...nested.items);
       files.push(...nested.files);
       await this.scraper.goBack();

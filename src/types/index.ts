@@ -95,6 +95,25 @@ export interface ContentItem {
   contentHash: string;
 }
 
+/** Progress emitted while the manual downloader reads course instructions. */
+export interface InstructionDiscoveryProgress {
+  phase: 'courses' | 'sections';
+  completed: number;
+  total: number;
+  currentCourse?: string;
+  currentSection?: string;
+  itemsFound: number;
+}
+
+/** Progress emitted while manual instruction Markdown files are written. */
+export interface InstructionWriteProgress {
+  completed: number;
+  total: number;
+  currentCourse?: string;
+  currentSection?: string;
+  currentTitle?: string;
+}
+
 export interface AgentAttachment {
   id: string;
   itemId?: string;

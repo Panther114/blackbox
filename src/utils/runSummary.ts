@@ -12,6 +12,10 @@ export interface RunSummaryReport {
   filesSkipped: number;
   filesFailed: number;
   failedFiles: Array<{ name: string; reason: string }>;
+  instructionCoursesSelected?: number;
+  instructionsDiscovered?: number;
+  instructionsDownloaded?: number;
+  instructionWarnings?: string[];
   logFilePath: string;
   downloadDir: string;
   runError?: string;
@@ -32,8 +36,16 @@ export function writeRunSummary(report: RunSummaryReport): void {
     `files downloaded: ${report.filesDownloaded}`,
     `files skipped: ${report.filesSkipped}`,
     `files failed: ${report.filesFailed}`,
+    `instruction courses selected: ${report.instructionCoursesSelected || 0}`,
+    `instructions discovered: ${report.instructionsDiscovered || 0}`,
+    `instructions downloaded: ${report.instructionsDownloaded || 0}`,
     `log file: ${path.resolve(report.logFilePath)}`,
   ];
+
+  if ((report.instructionWarnings || []).length > 0) {
+    lines.push('instruction warnings:');
+    for (const warning of report.instructionWarnings || []) lines.push(`- ${warning}`);
+  }
 
   if (report.runError) {
     lines.push(`run error: ${report.runError}`);
@@ -64,6 +76,10 @@ export function writeRunSummary(report: RunSummaryReport): void {
         filesSkipped: report.filesSkipped,
         filesFailed: report.filesFailed,
         failedFiles: report.failedFiles,
+        instructionCoursesSelected: report.instructionCoursesSelected || 0,
+        instructionsDiscovered: report.instructionsDiscovered || 0,
+        instructionsDownloaded: report.instructionsDownloaded || 0,
+        instructionWarnings: report.instructionWarnings || [],
         logFilePath: path.resolve(report.logFilePath),
         runError: report.runError,
       },

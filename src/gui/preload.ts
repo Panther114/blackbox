@@ -17,8 +17,8 @@ const api = {
     ipcRenderer.invoke('workflow:discover-courses', payload || {}),
   discoverFiles: (courses: Course[]): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('workflow:discover-files', { courses }),
-  downloadFiles: (files: DiscoveredFile[]): Promise<Record<string, unknown>> =>
-    ipcRenderer.invoke('workflow:download', { files }),
+  downloadFiles: (files: DiscoveredFile[], instructionCourses: Course[] = []): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('workflow:download', { files, instructionCourses }),
   cleanupWorkflow: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('workflow:cleanup'),
   getPaths: (): Promise<{ downloads: string; logs: string; summary: string }> =>
     ipcRenderer.invoke('paths:get'),
