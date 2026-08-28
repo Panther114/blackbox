@@ -23,13 +23,17 @@ const api = {
   getPaths: (): Promise<{ downloads: string; logs: string; summary: string }> =>
     ipcRenderer.invoke('paths:get'),
   openDownloads: (): Promise<string> => ipcRenderer.invoke('path:open-downloads'),
+  clearDownloads: (payload?: { downloadDir?: string }): Promise<{ ok: boolean; removed: number; directory: string }> =>
+    ipcRenderer.invoke('path:clear-downloads', payload || {}),
   openLogs: (): Promise<string> => ipcRenderer.invoke('path:open-logs'),
   chooseDownloadDirectory: (): Promise<string | null> => ipcRenderer.invoke('path:choose-download-directory'),
+  scanCourses: (payload?: Record<string, unknown>): Promise<Array<{ id: string; name: string; url: string; path: string }>> =>
+    ipcRenderer.invoke('settings:scan-courses', payload || {}),
   getAgentStatus: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('agent:status'),
   syncAgent: (payload?: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('agent:sync', payload || {}),
-  installCodexSkill: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('agent:codex-install'),
-  removeCodexSkill: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('agent:codex-remove'),
+  installHarnessSkill: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('agent:harness-install'),
+  removeHarnessSkill: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('agent:harness-remove'),
   getUpdateState: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('update:get-state'),
   checkForUpdates: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('update:check'),
   downloadUpdate: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('update:download'),

@@ -1,9 +1,9 @@
 import path from 'path';
-import { getConfig } from '../config';
+import { compactConfigOverrides, getConfig } from '../config';
 import { BlackboxDownloader } from '../index';
 import { AgentAttachment, Course } from '../types';
 import { writeAgentExport } from './exporter';
-import { getCodexSkillStatus, installCodexSkill, removeCodexSkill } from './codexSkill';
+import { getHarnessSkillStatus, installHarnessSkill, removeHarnessSkill } from './harnessSkill';
 import { acquireWorkflowLock, getWorkflowLockStatus } from '../workflow/runLock';
 
 export interface AgentSyncOptions {
@@ -13,6 +13,13 @@ export interface AgentSyncOptions {
   outputDir?: string;
 }
 
+export interface CourseListOptions {
+  username?: string;
+  password?: string;
+  downloadDir?: string;
+  headless?: boolean;
+}
+
 export class AgentService {
   async status(): Promise<Record<string, unknown>> {
     const config = getConfig();
@@ -20,24 +27,32 @@ export class AgentService {
       ...getWorkflowLockStatus(),
       configured: Boolean(config.username && config.password),
       downloadDir: path.resolve(config.downloadDir),
-      codexSkill: getCodexSkillStatus(),
+      harnessSkill: getHarnessSkillStatus(),
     };
   }
 
-  installCodexSkill(): Record<string, unknown> {
+  installHarnessSkill(): Record<string, unknown> {
     const config = getConfig();
-    return { codexSkill: installCodexSkill(config.downloadDir) };
+    return { harnessSkill: installHarnessSkill(config.downloadDir) };
   }
 
-  removeCodexSkill(): Record<string, unknown> {
-    return { codexSkill: removeCodexSkill() };
+  removeHarnessSkill(): Record<string, unknown> {
+    return { harnessSkill: removeHarnessSkill() };
   }
 
-  async listCourses(): Promise<Course[]> {
+  async listCourses(options: CourseListOptions = {}): Promise<Course[]> {
     const release = acquireWorkflowLock('agent:list-courses');
     let downloader: BlackboxDownloader | null = null;
     try {
-      downloader = new BlackboxDownloader(getConfig());
+      const config = getConfig(
+        compactConfigOverrides({
+          username: options.username,
+          password: options.password,
+          downloadDir: options.downloadDir,
+          headless: options.headless,
+        }),
+      );
+      downloader = new BlackboxDownloader(config);
       await downloader.initialize();
       return await downloader.getCourses();
     } finally {

@@ -138,6 +138,8 @@ button:disabled { opacity: 0.48; box-shadow: none; }
 .settings-tabs button { min-height: 32px; padding: 7px 13px; border: 0; border-radius: 8px; color: var(--ink-soft); background: transparent; font-size: 11.5px; }
 .settings-tabs button:hover { color: var(--ink); background: rgba(255, 255, 255, 0.7); }
 .settings-tabs button.is-active { color: var(--blue-ink); background: var(--surface); box-shadow: var(--shadow-sm); }
+.settings-utility { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; color: var(--ink-muted); font-size: 10.5px; }
+.settings-utility span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-panel { gap: 18px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 15px; }
 .credentials-form { grid-template-columns: minmax(0, 1fr); gap: 17px; }
@@ -230,6 +232,8 @@ input:focus, select:focus { border-color: var(--blue); outline: none; background
 .launch-stage.is-done .stage-number { border-color: var(--green); color: #fff; background: var(--green); }
 
 .stepper { display: flex; margin: 0; padding: 0 3px; list-style: none; }
+.download-stepper-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
+.download-stepper-row .stepper { min-width: 0; flex: 1; }
 .step { display: flex; min-width: 0; flex: 1; align-items: center; gap: 7px; }
 .step-dot { display: grid; flex: none; width: 27px; height: 27px; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--ink-muted); background: var(--surface); font-size: 10.5px; font-weight: 800; }
 .step-label { overflow: hidden; color: var(--ink-muted); font-size: 10.5px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
@@ -278,6 +282,10 @@ input:focus, select:focus { border-color: var(--blue); outline: none; background
 .list-name { min-width: 0; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .list-state { color: var(--ink-muted); font-size: 10px; font-weight: 700; }
 .list-state.is-on { color: var(--blue-ink); }
+.course-block-actions { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 10px; }
+.course-block-actions .field-help { flex: 1; min-width: 220px; margin: 0; }
+.course-block-list { max-height: 390px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-soft); }
+.course-block-list .list-row { grid-template-columns: 25px 30px minmax(0, 1fr) auto; }
 .table { max-height: 510px; }
 .table-head, .table-row { display: grid; grid-template-columns: 28px minmax(190px, 2fr) 58px 82px minmax(170px, 2fr) 82px; min-width: 750px; align-items: center; gap: 8px; padding: 8px 11px; border-bottom: 1px solid var(--line-soft); font-size: 11px; }
 .table-head { position: sticky; top: 0; z-index: 1; color: var(--ink-muted); background: #eef3f9; font-size: 9.5px; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; }
@@ -413,6 +421,9 @@ code { padding: 1px 5px; border: 1px solid var(--line); border-radius: 5px; colo
   .toolbar .btn-row-inline button { flex: 1; }
   .settings-tabs { width: 100%; }
   .settings-tabs button { flex: 1; padding-right: 8px; padding-left: 8px; }
+  .settings-utility { align-items: flex-start; flex-direction: column; }
+  .download-stepper-row { align-items: stretch; flex-direction: column; }
+  .download-stepper-row > .btn-danger { align-self: flex-end; }
   .diagnostics-progress-top { margin-bottom: 10px; }
   .ready-panel { gap: 14px; padding: 16px 14px; }
   .ready-main { grid-template-columns: 46px minmax(0, 1fr); gap: 11px; }

@@ -31,6 +31,7 @@ export interface WorkflowSummary {
 
 export interface DiscoverCoursesOptions {
   filterPattern?: string;
+  excludeCourseIds?: string[];
 }
 
 export interface DownloadPreparation {

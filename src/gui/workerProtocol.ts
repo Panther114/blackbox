@@ -18,6 +18,7 @@ export interface WorkerCommandMap {
   };
   discoverCourses: {
     filterPattern?: string;
+    excludeCourseIds?: string[];
   };
   discoverFiles: {
     courses: Course[];

@@ -27,6 +27,10 @@ import {
 import { normalizeSupportedFilename } from '../utils/fileType';
 import { DownloadDatabase } from '../database';
 import { addFileToTree, saveFileTree } from '../fileTree';
+import {
+  isDownloadPresent,
+  scanDownloadDirectory,
+} from '../downloadDirectory';
 
 /** Milliseconds without data before a download stream is considered stalled. */
 const INACTIVITY_TIMEOUT_MS = 30_000;
@@ -64,12 +68,14 @@ export class FileDownloader extends EventEmitter {
   private limiter: ReturnType<typeof pLimit>;
   private db: DownloadDatabase;
   private fileTree: FileTree;
+  private indexedDownloadFiles: Set<string>;
 
   constructor(config: Config, cookies: any[], db: DownloadDatabase, fileTree: FileTree) {
     super();
     this.config = config;
     this.db = db;
     this.fileTree = fileTree;
+    this.indexedDownloadFiles = scanDownloadDirectory(config.downloadDir);
     this.limiter = pLimit(config.maxConcurrentDownloads);
 
     // Build cookie string from the authenticated Playwright session.
@@ -213,8 +219,10 @@ export class FileDownloader extends EventEmitter {
    * downloads never accumulate on disk.
    */
   private async downloadFile(file: DownloadableFile): Promise<void> {
-    // Skip files that were already downloaded in a previous run.
-    if (this.db.isDownloaded(file.url)) {
+    // Skip only when the current configured download directory contains the
+    // target. Download history is intentionally not a source of truth because
+    // users can move or delete files outside the application.
+    if (isDownloadPresent(this.indexedDownloadFiles, file.path, file.name)) {
       log.debug(`Skipping already downloaded file: ${file.name}`);
       this.emit('download:skip', { url: file.url, filename: file.name });
       return;
@@ -280,6 +288,14 @@ export class FileDownloader extends EventEmitter {
 
         filename = sanitizeFilename(filename);
 
+        // HEAD metadata may have exposed a server-side filename different from
+        // the discovery label. Recheck the actual target after resolving it.
+        if (isDownloadPresent(this.indexedDownloadFiles, file.path, filename)) {
+          log.debug('Skipping already downloaded file on disk: ' + filename);
+          this.emit('download:skip', { url: file.url, filename });
+          return;
+        }
+
         // Ensure the target directory exists.
         ensureDirectory(file.path);
 
@@ -342,7 +358,6 @@ export class FileDownloader extends EventEmitter {
         tmpPath = null; // no cleanup needed
 
         const fileSize = fs.statSync(finalPath).size;
-
         this.db.upsertDownload({
           url: file.url,
           path: finalPath,
@@ -458,6 +473,10 @@ export class FileDownloader extends EventEmitter {
     }
 
     log.info(`Starting download of ${files.length} files...`);
+
+    // Refresh for every batch so a changed download directory or a manual
+    // deletion is reflected immediately, even when this instance is reused.
+    this.indexedDownloadFiles = scanDownloadDirectory(this.config.downloadDir);
 
     await Promise.all(files.map(file => this.limiter(() => this.downloadFile(file))));
 

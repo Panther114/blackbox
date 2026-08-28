@@ -11,8 +11,9 @@ import {
 
 type DownloadStage = 'ready' | 'courses' | 'files' | 'download' | 'summary';
 type View = 'download' | 'agent' | 'settings';
-type SettingsSection = 'credentials' | 'diagnostics' | 'updates';
+type SettingsSection = 'credentials' | 'courses' | 'diagnostics' | 'updates';
 type Course = { id: string; name: string; url: string; path: string };
+type BlockedCourse = { id: string; name: string };
 type DiscoveredFile = {
   name: string;
   url: string;
@@ -164,15 +165,15 @@ const WIZARD_STEPS = ['Courses', 'Files', 'Download', 'Summary'] as const;
 const wizardStepIndex = (stage: DownloadStage): number => stage === 'courses' ? 0 : stage === 'files' ? 1 : stage === 'download' ? 2 : stage === 'summary' ? 3 : -1;
 const SAVED_PASSWORD_MASK = '••••••••';
 
-function codexSkillInstalled(info: Record<string, unknown> | null): boolean {
-  const nested = info?.codexSkill;
-  return Boolean(info?.codexInstalled || (nested && typeof nested === 'object' && (nested as Record<string, unknown>).installed));
+function harnessSkillInstalled(info: Record<string, unknown> | null): boolean {
+  const nested = info?.harnessSkill;
+  return Boolean(info?.harnessInstalled || (nested && typeof nested === 'object' && (nested as Record<string, unknown>).installed));
 }
 
-function codexSkillPath(info: Record<string, unknown> | null): string {
-  const nested = info?.codexSkill;
+function harnessSkillPath(info: Record<string, unknown> | null): string {
+  const nested = info?.harnessSkill;
   if (nested && typeof nested === 'object' && typeof (nested as Record<string, unknown>).path === 'string') return String((nested as Record<string, unknown>).path);
-  return typeof info?.codexSkillPath === 'string' ? String(info.codexSkillPath) : '';
+  return typeof info?.harnessSkillPath === 'string' ? String(info.harnessSkillPath) : '';
 }
 
 export function App() {
@@ -190,7 +191,9 @@ export function App() {
   const [passwordError, setPasswordError] = useState('');
   const [hasCredentials, setHasCredentials] = useState(false);
   const [isScanningCourses, setIsScanningCourses] = useState(false);
-  const [config, setConfig] = useState({ username: '', password: '', downloadDir: './downloads', headless: true, autoCheckUpdates: true });
+  const [isScanningBlockedCourses, setIsScanningBlockedCourses] = useState(false);
+  const [blockedCourseCatalog, setBlockedCourseCatalog] = useState<Course[]>([]);
+  const [config, setConfig] = useState({ username: '', password: '', downloadDir: './downloads', headless: true, autoCheckUpdates: true, blockedCourses: [] as BlockedCourse[] });
   const [paths, setPaths] = useState({ downloads: '', logs: '', summary: '' });
   const [preparationProgress, setPreparationProgress] = useState<PreparationProgress | null>(null);
   const [discoveryProgress, setDiscoveryProgress] = useState<DiscoveryProgress | null>(null);
@@ -222,13 +225,14 @@ export function App() {
   useEffect(() => {
     if (DEMO_MODE) {
       const demoDownloadDir = 'C:\\Users\\demo\\Downloads\\Blackbox';
-      setVersion('1.0.1');
+      setVersion('1.0.2');
       setConfig(previous => ({ ...previous, username: 'g12345678', password: 'blackboard-demo-password', downloadDir: demoDownloadDir, headless: true, autoCheckUpdates: true }));
       setSavedPassword('blackboard-demo-password');
       setPasswordStored(true);
       setPasswordReadable(true);
       setPasswordError('');
       setHasCredentials(true);
+      setBlockedCourseCatalog(DEMO_COURSES);
       setPaths({ downloads: demoDownloadDir, logs: `${demoDownloadDir}\\logs`, summary: `${demoDownloadDir}\\logs\\latest-summary.txt` });
       setAgentInfo({ ...DEMO_AGENT_STATUS });
       setUpdateState({ status: 'idle', message: 'You are on the latest version.' });
@@ -251,6 +255,8 @@ export function App() {
         setSummary(DEMO_SUMMARY); setStage('summary');
       } else if (DEMO_SCREEN === 'diagnostics') {
         setActiveView('settings'); setSettingsSection('diagnostics'); setDoctorRows(DEMO_DOCTOR_ROWS); setDiagnosticsProgress({ running: false, completed: 10, total: 10, current: 'Diagnostics complete', loginTest: false });
+      } else if (DEMO_SCREEN === 'blocked-courses' || DEMO_SCREEN === 'course-settings') {
+        setActiveView('settings'); setSettingsSection('courses');
       } else if (DEMO_SCREEN === 'agent') setActiveView('agent');
       else if (DEMO_SCREEN === 'updates') { setActiveView('settings'); setSettingsSection('updates'); }
       else if (DEMO_SCREEN === 'credentials') { setActiveView('settings'); setSettingsSection('credentials'); }
@@ -272,6 +278,19 @@ export function App() {
         setPasswordReadable(readable);
         setPasswordError(String(cfg.passwordError || ''));
         setHasCredentials(Boolean(cfg.hasCredentials));
+        const loadedBlockedCourses = Array.isArray(cfg.blockedCourses)
+          ? cfg.blockedCourses
+              .filter(
+                (course): course is BlockedCourse =>
+                  Boolean(course) &&
+                  typeof course === 'object' &&
+                  typeof (course as Record<string, unknown>).id === 'string' &&
+                  typeof (course as Record<string, unknown>).name === 'string',
+              )
+              .map(course => ({ id: course.id.trim(), name: course.name.trim() }))
+              .filter(course => Boolean(course.id && course.name))
+          : [];
+        setConfig(previous => ({ ...previous, blockedCourses: loadedBlockedCourses }));
         setPaths(await window.blackboxGui.getPaths());
         setUpdateState(await window.blackboxGui.getUpdateState());
       } catch (error) { setErrorMessage(toGuiErrorMessage(error)); }
@@ -350,16 +369,31 @@ export function App() {
 
   const deferredCourseSearch = useDeferredValue(courseSearch);
   const deferredFileSearch = useDeferredValue(fileSearch);
-  const visibleCourses = useMemo(() => courses.filter(course => course.name.toLowerCase().includes(deferredCourseSearch.toLowerCase())), [courses, deferredCourseSearch]);
+  const blockedCourseIds = useMemo(() => new Set(config.blockedCourses.map(course => course.id)), [config.blockedCourses]);
+  const visibleCourses = useMemo(
+    () => courses.filter(
+      course =>
+        !blockedCourseIds.has(course.id) &&
+        course.name.toLowerCase().includes(deferredCourseSearch.toLowerCase()),
+    ),
+    [blockedCourseIds, courses, deferredCourseSearch],
+  );
   const selectableFiles = useMemo(() => files.filter(file => {
     const query = `${file.name} ${file.courseName} ${file.sectionName}`.toLowerCase();
     if (deferredFileSearch && !query.includes(deferredFileSearch.toLowerCase())) return false;
     if (typeFilter !== 'all' && (file.fileType || '').toLowerCase() !== typeFilter) return false;
     return true;
   }), [files, deferredFileSearch, typeFilter]);
-  const selectedCourses = courses.filter(course => selectedCourseIds.has(course.id));
+  const selectedCourses = courses.filter(course => selectedCourseIds.has(course.id) && !blockedCourseIds.has(course.id));
   const selectedInstructionCourses = selectedCourses.filter(course => selectedInstructionCourseIds.has(course.id));
   const selectedFiles = files.filter(file => selectedFileUrls.has(file.url));
+  const blockedCourseRows = useMemo(() => {
+    const knownIds = new Set(blockedCourseCatalog.map(course => course.id));
+    const missing = config.blockedCourses
+      .filter(course => !knownIds.has(course.id))
+      .map(course => ({ id: course.id, name: course.name, url: '', path: '' }));
+    return [...blockedCourseCatalog, ...missing];
+  }, [blockedCourseCatalog, config.blockedCourses]);
   const progressPercent = downloadState.totalKnownBytes > 0 ? clampPercent((downloadState.downloadedBytes / downloadState.totalKnownBytes) * 100) : selectedRunFileCount > 0 ? clampPercent(((downloadState.completed + downloadState.skipped) / selectedRunFileCount) * 100) : 0;
   const remainingKnownBytes = Math.max(0, downloadState.totalKnownBytes - downloadState.downloadedBytes);
   const countProgress = downloadState.completed + downloadState.skipped;
@@ -395,10 +429,92 @@ export function App() {
     await runWithUiError(async () => { const selected = await window.blackboxGui.chooseDownloadDirectory(); if (selected) { setConfig(previous => ({ ...previous, downloadDir: selected })); setStatus('Folder selected. Save settings to keep it.'); } });
   }
 
+  async function clearDownloads() {
+    if (!window.confirm('Clear every file and folder inside the configured download directory? This cannot be undone.')) return;
+    await runWithUiError(async () => {
+      setStatus('Clearing downloaded files...');
+      let removed = 0;
+      if (DEMO_MODE || !window.blackboxGui) {
+        await delay(300);
+      } else {
+        const result = await window.blackboxGui.clearDownloads({ downloadDir: config.downloadDir });
+        removed = Number(result.removed || 0);
+      }
+      setCourses([]);
+      setSelectedCourseIds(new Set());
+      setSelectedInstructionCourseIds(new Set());
+      setFiles([]);
+      setSelectedFileUrls(new Set());
+      setKnownByUrl(new Map());
+      setSummary(null);
+      setDiscoveryProgress(null);
+      setInstructionProgress(null);
+      setStage('ready');
+      setStatus(
+        removed === 1
+          ? 'Cleared 1 item from the download directory.'
+          : 'Cleared ' + removed + ' items from the download directory.',
+      );
+    });
+  }
+
+  async function scanBlockedCourses() {
+    if (isScanningBlockedCourses) return;
+    setActiveView('settings');
+    setSettingsSection('courses');
+    setIsScanningBlockedCourses(true);
+    await runWithUiError(async () => {
+      const hasPassword = passwordStored && config.password === SAVED_PASSWORD_MASK
+        ? true
+        : Boolean(config.password.trim());
+      if (!config.username.trim() || !hasPassword) {
+        throw new Error('Save your Blackboard username and password in Credentials before scanning courses.');
+      }
+      setStatus(DEMO_MODE ? 'Scanning the offline course catalog...' : 'Scanning your Blackboard course list...');
+      const discovered = DEMO_MODE || !window.blackboxGui
+        ? (await delay(450), DEMO_COURSES)
+        : await window.blackboxGui.scanCourses({
+            username: config.username || undefined,
+            password: passwordStored && config.password === SAVED_PASSWORD_MASK ? undefined : config.password || undefined,
+            downloadDir: config.downloadDir,
+            headless: config.headless,
+          });
+      setBlockedCourseCatalog(discovered);
+      setStatus(
+        discovered.length === 1
+          ? 'Found 1 course. Select the courses to block, then save.'
+          : 'Found ' + discovered.length + ' courses. Select the courses to block, then save.',
+      );
+    });
+    setIsScanningBlockedCourses(false);
+  }
+
+  function toggleBlockedCourse(course: Course) {
+    const isBlocked = config.blockedCourses.some(blocked => blocked.id === course.id);
+    const blockedCourses = isBlocked
+      ? config.blockedCourses.filter(blocked => blocked.id !== course.id)
+      : [...config.blockedCourses, { id: course.id, name: course.name }];
+    setConfig(previous => ({ ...previous, blockedCourses }));
+    if (!isBlocked) {
+      setSelectedCourseIds(previous => {
+        const next = new Set(previous);
+        next.delete(course.id);
+        return next;
+      });
+      setSelectedInstructionCourseIds(previous => {
+        const next = new Set(previous);
+        next.delete(course.id);
+        return next;
+      });
+    }
+    setStatus('Course block changes are pending. Save settings to apply them.');
+  }
+
   async function runDemoPreparation() {
     setIsPreparingDownload(true); setStage('ready'); setSummary(null); setInstructionProgress(null); setSelectedRunInstructionCourseCount(0); setPreparationProgress({ completed: 0, total: 3, label: 'Connecting to Blackboard (offline demo)' }); setStatus('Simulating a Blackboard session. No network request will be made.');
     await delay(650); setPreparationProgress({ completed: 1, total: 3, label: 'Loading your course list' }); await delay(550); setPreparationProgress({ completed: 2, total: 3, label: 'Indexing available courses' }); await delay(750);
-    setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus(''); setPreparationProgress(null); setIsPreparingDownload(false);
+    const availableDemoCourses = DEMO_COURSES.filter(course => !config.blockedCourses.some(blocked => blocked.id === course.id));
+    setCourses(availableDemoCourses); setSelectedCourseIds(new Set(availableDemoCourses.map(course => course.id))); setSelectedInstructionCourseIds(new Set(availableDemoCourses.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus(''); setPreparationProgress(null); setIsPreparingDownload(false);
   }
 
   async function startFlow() {
@@ -553,12 +669,28 @@ export function App() {
     await runWithUiError(async () => { setStatus(DEMO_MODE ? 'Building a local demo export...' : 'Reading Blackboard instructions and building agent export...'); if (DEMO_MODE || !window.blackboxGui) { await delay(500); setAgentOutput({ ...DEMO_AGENT_OUTPUT }); } else setAgentOutput(await window.blackboxGui.syncAgent({ includeFiles: false, includeInstructions: true })); setStatus('Agent export ready.'); });
   }
 
-  async function installCodex() {
-    await runWithUiError(async () => { setStatus(DEMO_MODE ? 'Simulating Codex skill installation...' : 'Installing the Blackbox skill for Codex...'); const result = DEMO_MODE || !window.blackboxGui ? { codexSkill: { ...DEMO_AGENT_STATUS, installed: true, managed: true } } : await window.blackboxGui.installCodexSkill(); await delay(DEMO_MODE ? 300 : 0); setAgentInfo(previous => ({ ...(previous || {}), codexSkill: result.codexSkill, codexInstalled: true })); setStatus('Blackbox is available to Codex. Restart Codex if it does not appear immediately.'); });
+  async function installHarness() {
+    await runWithUiError(async () => {
+      setStatus(DEMO_MODE ? 'Simulating harness skill installation...' : 'Installing the Blackbox skill for compatible harnesses...');
+      const result = DEMO_MODE || !window.blackboxGui
+        ? { harnessSkill: { ...DEMO_AGENT_STATUS, installed: true, managed: true } }
+        : await window.blackboxGui.installHarnessSkill();
+      await delay(DEMO_MODE ? 300 : 0);
+      setAgentInfo(previous => ({ ...(previous || {}), harnessSkill: result.harnessSkill, harnessInstalled: true }));
+      setStatus('Blackbox is available to compatible harnesses.');
+    });
   }
 
-  async function removeCodex() {
-    await runWithUiError(async () => { setStatus(DEMO_MODE ? 'Simulating Codex skill removal...' : 'Removing the Blackbox skill from Codex...'); const result = DEMO_MODE || !window.blackboxGui ? { codexSkill: { ...DEMO_AGENT_STATUS, installed: false, managed: false } } : await window.blackboxGui.removeCodexSkill(); await delay(DEMO_MODE ? 300 : 0); setAgentInfo(previous => ({ ...(previous || {}), codexSkill: result.codexSkill, codexInstalled: false })); setStatus('Blackbox was removed from Codex.'); });
+  async function removeHarness() {
+    await runWithUiError(async () => {
+      setStatus(DEMO_MODE ? 'Simulating harness skill removal...' : 'Removing the Blackbox skill from compatible harnesses...');
+      const result = DEMO_MODE || !window.blackboxGui
+        ? { harnessSkill: { ...DEMO_AGENT_STATUS, installed: false, managed: false } }
+        : await window.blackboxGui.removeHarnessSkill();
+      await delay(DEMO_MODE ? 300 : 0);
+      setAgentInfo(previous => ({ ...(previous || {}), harnessSkill: result.harnessSkill, harnessInstalled: false }));
+      setStatus('Blackbox was removed from compatible harnesses.');
+    });
   }
 
   async function checkUpdates() {
@@ -570,15 +702,15 @@ export function App() {
   const fileTypes = Array.from(new Set(files.map(file => (file.fileType || '').toLowerCase()).filter(Boolean)));
   const navItems: Array<{ id: View; label: string; hint: string; icon: React.ReactNode }> = [
     { id: 'download', label: 'Downloads', hint: 'Courses, files and saving', icon: <Icon name="download" size={21} /> },
-    { id: 'agent', label: 'Agent Export', hint: 'Read-only tools and Codex', icon: <Icon name="agent" size={21} /> },
+    { id: 'agent', label: 'Agent Export', hint: 'Read-only tools and harnesses', icon: <Icon name="agent" size={21} /> },
     { id: 'settings', label: 'Settings', hint: 'Credentials, diagnostics and updates', icon: <Icon name="sliders" size={21} /> },
   ];
 
   function onNav(id: View) { setErrorMessage(''); setActiveView(id); if (id === 'agent') void loadAgentStatus(); }
   const activeLabel = navItems.find(item => item.id === activeView)?.label || 'Downloads';
   const activeIcon: IconName = activeView === 'download' ? 'download' : activeView === 'agent' ? 'agent' : 'sliders';
-  const codexInstalled = codexSkillInstalled(agentInfo);
-  const skillPath = codexSkillPath(agentInfo);
+  const harnessInstalled = harnessSkillInstalled(agentInfo);
+  const skillPath = harnessSkillPath(agentInfo);
   const showGlobalStatus = Boolean(status) && !(activeView === 'download' && (isPreparingDownload || isScanningCourses || stage === 'download'));
 
   return (
@@ -597,9 +729,11 @@ export function App() {
 
         {activeView === 'download' && stage === 'ready' && isPreparingDownload && <section className="view download-launch" aria-live="polite" data-testid="download-launch"><div className="panel launch-panel"><div className="launch-hero"><div className="launch-visual"><div className="launch-orbit"><AppIcon /></div></div><div className="launch-copy"><h2>Preparing your course list</h2><p>{status || 'Connecting to Blackboard and loading the courses available to you.'}</p></div></div><ProgressBar label={preparationProgress?.label || 'Starting'} value={preparationProgress ? (preparationProgress.completed / preparationProgress.total) * 100 : 8} indeterminate={!preparationProgress} detail={preparationProgress ? `${preparationProgress.completed} of ${preparationProgress.total}` : 'Working'} /><div className="launch-stages">{['Connect', 'Discover courses', 'Choose files'].map((label, index) => { const progress = preparationProgress?.completed || 0; const state = progress > index ? 'done' : progress === index ? 'current' : 'todo'; return <div key={label} className={`launch-stage is-${state}`}><span className="stage-number">{state === 'done' ? <Icon name="check" size={14} /> : index + 1}</span><span>{label}</span></div>; })}</div></div></section>}
 
-        {activeView === 'download' && stage === 'ready' && !isPreparingDownload && <section className="view"><div className="panel ready-panel"><div className="ready-main"><span className="ready-icon"><AppIcon /></span><div><h2>Ready to download</h2><p>Choose courses, review files, and save documents to your configured folder.</p></div></div><div className="ready-actions"><button className="btn-primary btn-lg" onClick={hasCredentials ? beginDownload : () => { setActiveView('settings'); setSettingsSection('credentials'); }}><Icon name={hasCredentials ? 'download' : 'key'} size={17} />{hasCredentials ? 'Start a download' : 'Open credentials'}</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={17} /> Open downloads</button></div><dl className="ready-meta"><div><dt>Access</dt><dd>{hasCredentials ? 'Credentials ready' : 'Credentials required'}</dd></div><div><dt>Save to</dt><dd className="mono">{paths.downloads || config.downloadDir || '...'}</dd></div></dl></div></section>}
+        {activeView === 'download' && stage === 'ready' && !isPreparingDownload && <section className="view"><div className="panel ready-panel"><div className="ready-main"><span className="ready-icon"><AppIcon /></span><div><h2>Ready to download</h2><p>Choose courses, review files, and save documents to your configured folder.</p></div></div><div className="ready-actions"><button className="btn-primary btn-lg" onClick={hasCredentials ? beginDownload : () => { setActiveView('settings'); setSettingsSection('credentials'); }}><Icon name={hasCredentials ? 'download' : 'key'} size={17} />{hasCredentials ? 'Start a download' : 'Open credentials'}</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={17} /> Open downloads</button><button className="btn-danger" onClick={clearDownloads}><Icon name="x" size={17} /> Clear downloaded files</button></div><dl className="ready-meta"><div><dt>Access</dt><dd>{hasCredentials ? 'Credentials ready' : 'Credentials required'}</dd></div><div><dt>Save to</dt><dd className="mono">{paths.downloads || config.downloadDir || '...'}</dd></div></dl></div></section>}
 
-        {activeView === 'settings' && <section className="view settings-view"><nav className="settings-tabs" aria-label="Settings sections">{(['credentials', 'diagnostics', 'updates'] as SettingsSection[]).map(section => <button key={section} className={settingsSection === section ? 'is-active' : ''} onClick={() => setSettingsSection(section)}>{section === 'credentials' ? 'Credentials' : section === 'diagnostics' ? 'Diagnostics' : 'Updates'}</button>)}</nav>
+        {activeView === 'settings' && <section className="view settings-view"><nav className="settings-tabs" aria-label="Settings sections">{(['credentials', 'courses', 'diagnostics', 'updates'] as SettingsSection[]).map(section => <button key={section} className={settingsSection === section ? 'is-active' : ''} onClick={() => setSettingsSection(section)}>{section === 'credentials' ? 'Credentials' : section === 'courses' ? 'Courses' : section === 'diagnostics' ? 'Diagnostics' : 'Updates'}</button>)}</nav>
+          <div className="settings-utility"><span>Manage local Blackbox data</span><button className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</button></div>
+
           {settingsSection === 'credentials' && (
             <div className="panel settings-panel" data-testid="credentials-panel">
               <div className="surface-intro"><div><h2>Account access</h2><p>Stored locally on this machine. Your password is kept in the OS secure store.</p></div><span className={`state-badge ${hasCredentials ? 'state-good' : 'state-warn'}`}>{hasCredentials ? 'Ready' : 'Needs setup'}</span></div>
@@ -613,14 +747,29 @@ export function App() {
             </div>
           )}
 
+          {settingsSection === 'courses' && (
+            <div className="panel settings-panel" data-testid="course-settings-panel">
+              <div className="surface-intro"><div><h2>Course filters</h2><p>Scan your Blackboard course list and block courses you no longer want Blackbox to check.</p></div><span className={'state-badge ' + (config.blockedCourses.length ? 'state-warn' : 'state-neutral')}>{config.blockedCourses.length ? config.blockedCourses.length + ' blocked' : 'None blocked'}</span></div>
+              <div className="course-block-actions"><button className="btn-primary" disabled={isScanningBlockedCourses} onClick={scanBlockedCourses}><Icon name="scan" size={17} className={isScanningBlockedCourses ? 'is-spinning' : ''} /> {isScanningBlockedCourses ? 'Scanning courses...' : 'Scan available courses'}</button><span className="field-help">Blocked courses stay out of Downloads until you unblock and save them.</span></div>
+              <div className="course-block-list" aria-busy={isScanningBlockedCourses}>
+                {blockedCourseRows.map(course => {
+                  const blocked = config.blockedCourses.some(candidate => candidate.id === course.id);
+                  return <label key={course.id} className={'list-row ' + (blocked ? 'is-selected' : '')} title={course.name}><input type="checkbox" checked={blocked} disabled={isScanningBlockedCourses} onChange={() => toggleBlockedCourse(course)} /><span className="list-index"><Icon name={blocked ? 'x-circle' : 'book'} size={15} /></span><span className="list-name">{course.name}</span><span className={'list-state ' + (blocked ? 'is-on' : '')}>{blocked ? 'Blocked' : 'Available'}</span></label>;
+                })}
+                {blockedCourseRows.length === 0 && <div className="empty-state"><Icon name="book" size={23} /><strong>No course list yet</strong><span>Scan your available courses to choose permanent filters.</span></div>}
+              </div>
+              <div className="btn-row"><button className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save course filters</button><button className="btn-ghost" onClick={() => setConfig(previous => ({ ...previous, blockedCourses: [] }))} disabled={config.blockedCourses.length === 0}><Icon name="refresh" size={17} /> Unblock all</button></div>
+            </div>
+          )}
+
           {settingsSection === 'diagnostics' && <div className="panel settings-panel" data-testid="diagnostics-panel"><div className="surface-intro"><div><h2>Environment checks</h2><p>If Blackboard is not working, run a check here to pinpoint what is failing.</p></div><span className={`state-badge ${doctorRows.length ? 'state-good' : 'state-neutral'}`}>{doctorRows.length ? `${doctorRows.length} results` : 'Not run'}</span></div><div className="btn-row"><button className="btn-primary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(false)}><Icon name="scan" size={17} /> Run checks</button><button className="btn-secondary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(true)}><Icon name="shield" size={17} /> Run and login test</button></div>{doctorRows.length > 0 ? <ul className="checks">{doctorRows.map((row, index) => <li key={`${row.message}-${index}`} className={`check check-${row.status}`}><span className="check-dot"><Icon name={row.status === 'pass' ? 'check' : row.status === 'warn' ? 'warning' : 'x'} size={13} /></span><span className="check-msg">{row.message}</span>{row.required === false && <span className="check-optional">optional</span>}</li>)}</ul> : <p className="empty-inline">No checks run yet.</p>}</div>}
 
           {settingsSection === 'updates' && <div className="panel settings-panel" data-testid="updates-panel"><div className="surface-intro"><div><h2>Application updates</h2><p>Keep the desktop app current without interrupting a download.</p></div><span className="state-badge state-neutral">v{version || '...'}</span></div><div className="update-summary"><div><span>Status</span><strong>{String(updateState.status || 'idle')}</strong></div>{updateState.version != null && <div><span>Available</span><strong>{String(updateState.version)}</strong></div>}</div>{updateState.message != null && <p className="inline-message">{String(updateState.message)}</p>}{updateState.status === 'downloading' && <ProgressBar label="Downloading update" value={Number(updateState.percent || 0)} detail={`${Number(updateState.percent || 0).toFixed(0)}%`} />}<label className="toggle-row"><input type="checkbox" checked={config.autoCheckUpdates} onChange={event => setConfig(previous => ({ ...previous, autoCheckUpdates: event.target.checked }))} /><span><strong>Check automatically</strong><small>Look for updates when the app starts.</small></span></label><div className="btn-row"><button className="btn-primary" disabled={updateState.status === 'checking' || updateState.status === 'downloading'} onClick={checkUpdates}><Icon name="refresh" size={17} /> Check now</button><button className="btn-secondary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save preferences</button>{updateState.status === 'available' && <button className="btn-secondary" onClick={downloadAppUpdate}><Icon name="download" size={17} /> Download update</button>}{updateState.status === 'ready' && <button className="btn-secondary" onClick={() => window.blackboxGui.installUpdate()}><Icon name="updates" size={17} /> Restart and install</button>}</div></div>}
         </section>}
 
-        {activeView === 'agent' && <section className="view" data-testid="agent-panel"><div className="panel agent-panel"><div className="surface-intro"><div><h2>Read-only course context</h2><p>Export instructions, assignments, announcements, and attachments for coding agents. The export never submits work or changes Blackboard.</p></div><span className={`state-badge ${agentInfo?.configured ? 'state-good' : 'state-warn'}`}>{agentInfo?.configured ? 'Configured' : 'Setup needed'}</span></div><div className="agent-summary"><div><span>Workflow</span><strong>{agentInfo?.busy ? 'Busy' : 'Idle'}</strong></div><div><span>Export folder</span><strong className="mono">{String(agentInfo?.downloadDir || paths.downloads || config.downloadDir)}</strong></div></div><div className="agent-actions"><button className="btn-primary" onClick={syncAgent} disabled={Boolean(agentInfo?.busy) || !agentInfo?.configured}><Icon name="cloud-download" size={17} /> Build export</button><button className="btn-secondary" onClick={loadAgentStatus}><Icon name="refresh" size={17} /> Refresh status</button></div><div className="integration-row"><div><strong>Codex skill</strong><p>Install the local read-only skill in <code>~/.agents/skills</code>. Codex will discover it automatically; restart Codex if needed.</p>{skillPath && <span className="mono">{skillPath}</span>}</div><div className="integration-actions"><span className={`state-badge ${codexInstalled ? 'state-good' : 'state-neutral'}`}>{codexInstalled ? 'Installed' : 'Not installed'}</span>{codexInstalled ? <button className="btn-danger" onClick={removeCodex}><Icon name="x" size={16} /> Remove from Codex</button> : <button className="btn-secondary" onClick={installCodex}><Icon name="check" size={16} /> Install in Codex</button>}</div></div>{agentOutput && <div className="code-block"><pre>{JSON.stringify(agentOutput, null, 2)}</pre></div>}<p className="field-help">MCP command: <code>Blackbox.exe --mcp</code> when using the packaged app.</p></div></section>}
+{activeView === 'agent' && <section className="view" data-testid="agent-panel"><div className="panel agent-panel"><div className="surface-intro"><div><h2>Read-only course context</h2><p>Export instructions, assignments, announcements, and attachments for coding agents. The export never submits work or changes Blackboard.</p></div><span className={`state-badge ${agentInfo?.configured ? 'state-good' : 'state-warn'}`}>{agentInfo?.configured ? 'Configured' : 'Setup needed'}</span></div><div className="agent-summary"><div><span>Workflow</span><strong>{agentInfo?.busy ? 'Busy' : 'Idle'}</strong></div><div><span>Export folder</span><strong className="mono">{String(agentInfo?.downloadDir || paths.downloads || config.downloadDir)}</strong></div></div><div className="agent-actions"><button className="btn-primary" onClick={syncAgent} disabled={Boolean(agentInfo?.busy) || !agentInfo?.configured}><Icon name="cloud-download" size={17} /> Build export</button><button className="btn-secondary" onClick={loadAgentStatus}><Icon name="refresh" size={17} /> Refresh status</button></div><div className="integration-row"><div><strong>Harness skill</strong><p>Install the managed skill in <code>~/.agents/skills</code>. Compatible harnesses will discover it automatically.</p>{skillPath && <span className="mono">{skillPath}</span>}</div><div className="integration-actions"><span className={`state-badge ${harnessInstalled ? 'state-good' : 'state-neutral'}`}>{harnessInstalled ? 'Installed' : 'Not installed'}</span>{harnessInstalled ? <button className="btn-danger" onClick={removeHarness}><Icon name="x" size={16} /> Remove from harnesses</button> : <button className="btn-secondary" onClick={installHarness}><Icon name="check" size={16} /> Install for harnesses</button>}</div></div>{agentOutput && <div className="code-block"><pre>{JSON.stringify(agentOutput, null, 2)}</pre></div>}<p className="field-help">MCP command: <code>Blackbox.exe --mcp</code> when using the packaged app.</p></div></section>}
 
-        {activeView === 'download' && (stage === 'courses' || stage === 'files' || stage === 'download' || stage === 'summary') && <section className="view download-view"><Stepper current={wizardStepIndex(stage)} />
+        {activeView === 'download' && (stage === 'courses' || stage === 'files' || stage === 'download' || stage === 'summary') && <section className="view download-view"><div className="download-stepper-row"><Stepper current={wizardStepIndex(stage)} />{stage !== 'download' && <button className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</button>}</div>
           {stage === 'courses' && <div className="panel selection-panel" data-testid="course-list-panel"><div className="selection-head"><div><h2>Choose courses</h2><p>Select the courses to scan for files.</p></div><CountSummary items={[`${visibleCourses.length} shown`, `${selectedCourseIds.size} selected`, `${courses.length} total`]} /></div>{isScanningCourses && discoveryProgress && <ProgressBar label={discoveryProgress.phase === 'metadata' ? 'Reading file details' : 'Scanning course content'} value={discoveryPercent} detail={`${discoveryProgress.completed} / ${discoveryProgress.total}`} subdetail={discoveryProgress.currentSection || discoveryProgress.currentCourse || 'Working through the selected courses'} dataTestId="discovery-progress" />}<div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter courses" value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label><div className="btn-row btn-row-inline"><button className="btn-secondary" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set(courses.map(course => course.id)))}><Icon name="check-square" size={16} /> Select all</button><button className="btn-ghost" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set())}><Icon name="x" size={16} /> Clear</button><button className="btn-primary" disabled={selectedCourses.length === 0 || isScanningCourses} onClick={runScanFiles}><Icon name="scan" size={16} className={isScanningCourses ? 'is-spinning' : ''} /> {isScanningCourses ? 'Scanning...' : 'Scan selected'}</button></div></div><div className="list" aria-busy={isScanningCourses}>{visibleCourses.map((course, index) => { const selected = selectedCourseIds.has(course.id); return <label key={course.id} className={`list-row ${selected ? 'is-selected' : ''}`} title={course.name}><input type="checkbox" checked={selected} disabled={isScanningCourses} onChange={event => setSelectedCourseIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(course.id); else next.delete(course.id); return next; })} /><span className="list-index">{String(index + 1).padStart(2, '0')}</span><span className="list-name">{course.name}</span><span className={`list-state ${selected ? 'is-on' : ''}`}>{selected ? 'Selected' : 'Skipped'}</span></label>; })}{visibleCourses.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No courses found</strong><span>{courses.length ? 'Try a different search.' : 'Start a download to discover courses.'}</span></div>}</div></div>}
 
           {stage === 'files' && (
