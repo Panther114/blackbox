@@ -745,15 +745,18 @@ function BrowserModeSlider({ headless, onChange }: { headless: boolean; onChange
     onChange(nextHeadless);
   };
 
-  const segmentWidth = Math.max(0, (width - 10) / 2);
-  const activeLeft = width > 0 ? 5 + (width / 2 - 5) * (position / 100) : undefined;
-  const thumbLeft = width > 0 ? (activeLeft || 5) + segmentWidth - 32 : undefined;
+  const sliderInset = 4;
+  const thumbSize = 22;
+  const thumbGap = 4;
+  const segmentWidth = Math.max(0, (width - sliderInset * 2) / 2);
+  const activeLeft = width > 0 ? sliderInset + (width / 2 - sliderInset) * (position / 100) : undefined;
+  const thumbLeft = width > 0 ? (activeLeft || sliderInset) + segmentWidth - thumbSize - thumbGap : undefined;
 
   return <div className="browser-mode-control">
     <div ref={sliderRef} className="mode-slider" data-mode={headless ? 'headless' : 'visible'} data-dragging={dragging ? 'true' : 'false'} role="slider" tabIndex={0} aria-labelledby="browser-mode-label" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(position)} aria-valuetext={headless ? 'Headless, default' : 'Visible browser'} aria-orientation="horizontal" onKeyDown={handleKeyDown} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={() => setDragging(false)}>
-      <span className="mode-slider-track" aria-hidden="true"><span className="mode-slider-active" style={activeLeft === undefined ? undefined : { left: `${activeLeft}px`, width: `${segmentWidth}px` }} /><span className="mode-slider-thumb" style={thumbLeft === undefined ? undefined : { left: `${thumbLeft}px` }}><Icon name={headless ? 'monitor' : 'eye'} size={16} /></span></span>
-      <span className={`mode-option mode-option-headless ${headless ? 'is-active' : ''}`}><Icon name="monitor" size={16} /><span>Headless <small>(default)</small></span></span>
-      <span className={`mode-option mode-option-visible ${headless ? '' : 'is-active'}`}><Icon name="eye" size={16} /><span>Visible</span></span>
+      <span className="mode-slider-track" aria-hidden="true"><span className="mode-slider-active" style={activeLeft === undefined ? undefined : { left: `${activeLeft}px`, width: `${segmentWidth}px` }} /><span className="mode-slider-thumb" style={thumbLeft === undefined ? undefined : { left: `${thumbLeft}px` }}><Icon name={headless ? 'monitor' : 'eye'} size={14} /></span></span>
+      <span className={`mode-option mode-option-headless ${headless ? 'is-active' : ''}`}><Icon name="monitor" size={14} /><span>Headless <small>(default)</small></span></span>
+      <span className={`mode-option mode-option-visible ${headless ? '' : 'is-active'}`}><Icon name="eye" size={14} /><span>Visible</span></span>
     </div>
     <div className="mode-caption"><span>{headless ? 'The browser stays hidden during a run.' : 'The browser window stays visible for troubleshooting.'}</span><strong>{headless ? 'Default' : 'Visible'}</strong></div>
   </div>;
