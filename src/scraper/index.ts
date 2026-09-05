@@ -93,6 +93,18 @@ function isExternalUrl(url: string, baseUrl: string): boolean {
   }
 }
 
+/**
+ * Extract the Blackboard course id (e.g. `_123456_1`) from a course URL.
+ * Uses URL parsing so trailing query parameters are never included in the id.
+ */
+export function extractCourseId(courseUrl: string): string {
+  try {
+    return new URL(courseUrl).searchParams.get('course_id') || '';
+  } catch {
+    return '';
+  }
+}
+
 export function collectDownloadCandidates(
   rawLinks: RawContentLink[],
   baseUrl: string,
@@ -243,7 +255,7 @@ export class BlackboardScraper {
           `(subjectSignal=${matchedSubjectSignal ? 'yes' : 'no'})`
       );
       courses.push({
-        id: href.split('id=')[1] || '',
+        id: extractCourseId(fullUrl),
         name: courseName,
         url: fullUrl,
         path: sanitizeFilename(courseName),
@@ -325,7 +337,7 @@ export class BlackboardScraper {
 
     const contentLike = candidates.filter(link => isContentLike(link.title));
     const announcementLinks = options?.includeAnnouncements === true
-      ? candidates.filter(link => /announcement|å…¬å‘Š/i.test(link.title))
+      ? candidates.filter(link => /announcement|公告/i.test(link.title))
       : [];
     const prioritized = contentLike.length > 0 ? [...contentLike, ...announcementLinks] : candidates;
     const seenUrls = new Set<string>();

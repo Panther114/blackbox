@@ -76,7 +76,17 @@ export function clearDownloadDirectory(downloadDir: string): number {
   const root = path.parse(resolved).root;
   const home = path.resolve(os.homedir());
 
-  if (resolved === root || resolved === home) {
+  // Compare case-insensitively on Windows: path.resolve does not normalize
+  // casing, so "c:\users\admin" must still be recognized as the home
+  // directory. Also refuse any ancestor of home (e.g. C:\Users), because
+  // clearing those would wipe other users' data including home itself.
+  const key = (p: string): string => normalizeDownloadPath(p);
+  const isHomeOrAncestorOfHome = (candidate: string): boolean => {
+    const rel = path.relative(candidate, home);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  };
+
+  if (key(resolved) === key(root) || key(resolved) === key(home) || isHomeOrAncestorOfHome(resolved)) {
     throw new Error('Refusing to clear a filesystem or home-directory root. Choose a dedicated download folder.');
   }
 

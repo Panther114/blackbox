@@ -78,6 +78,20 @@ export interface Config {
   browserProfileDir?: string;
   /** Prefer the installed Microsoft Edge browser before bundled Playwright Chromium. */
   useSystemEdge?: boolean;
+  /**
+   * Automation backend for headless runs. `chromium` (default) is the packaged
+   * Playwright browser; `obscura` drives the Rust Obscura engine over CDP and
+   * is intended for testing headless discovery/extraction.
+   */
+  browserBackend?: 'chromium' | 'obscura';
+  /** Path or name of the Obscura executable. Defaults to `obscura` on PATH. */
+  obscuraBinary?: string;
+  /** Enable Obscura's built-in stealth mode (default true). */
+  obscuraStealth?: boolean;
+  /** Optional HTTP/SOCKS5 proxy passed to Obscura. */
+  obscuraProxy?: string;
+  /** Port for the Obscura CDP endpoint (default 9223). */
+  obscuraPort?: number;
 }
 
 export type ContentItemKind = 'content' | 'assignment' | 'announcement';

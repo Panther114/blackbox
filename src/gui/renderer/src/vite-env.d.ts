@@ -42,6 +42,11 @@ declare global {
       checkForUpdates: () => Promise<Record<string, unknown>>;
       downloadUpdate: () => Promise<Record<string, unknown>>;
       installUpdate: () => Promise<{ ok: boolean }>;
+      loadAutomationSettings: () => Promise<{ settings: Record<string, unknown>; normalDownloadDir: string }>;
+      saveAutomationSettings: (payload: Record<string, unknown>) => Promise<{ ok: boolean; settings: Record<string, unknown> }>;
+      chooseAutomationDirectory: () => Promise<string | null>;
+      openAutomationDirectory: () => Promise<string>;
+      startAutomationRun: () => Promise<Record<string, unknown>>;
       onWorkflowEvent: (handler: (event: { type: string; payload: unknown }) => void) => () => void;
     };
   }

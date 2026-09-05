@@ -48,6 +48,7 @@ export class DownloadWorkflow extends EventEmitter {
     this.blackboxDownloader.on('download:complete', data => this.emit('download:complete', data));
     this.blackboxDownloader.on('download:error', data => this.emit('download:error', data));
     this.blackboxDownloader.on('download:skip', data => this.emit('download:skip', data));
+    this.blackboxDownloader.on('download:rejected', data => this.emit('download:rejected', data));
     this.blackboxDownloader.on('files:discovery:progress', data => this.emit('files:discovery:progress', data));
     this.blackboxDownloader.on('files:metadata:progress', data => this.emit('files:metadata:progress', data));
     this.blackboxDownloader.on('files:metadata:complete', data => this.emit('files:metadata:complete', data));
@@ -186,12 +187,17 @@ function filterCourses(courses: Course[], options?: DiscoverCoursesOptions): Cou
   const available = excluded.size > 0 ? courses.filter(course => !excluded.has(course.id)) : courses;
   if (!pattern) return available;
 
+  let regex: RegExp;
   try {
-    const regex = new RegExp(pattern);
-    return available.filter(course => regex.test(course.name));
+    regex = new RegExp(pattern);
   } catch {
+    // Tolerated by design (see tests): a malformed pattern keeps every course
+    // visible rather than hiding the list. Warn loudly so a typo'd pattern is
+    // obvious in the run output before anything is downloaded.
+    log.warn(`Course filter "${pattern}" is not a valid regular expression; ignoring it.`);
     return available;
   }
+  return available.filter(course => regex.test(course.name));
 }
 
 export { filterAlreadyDownloaded, filterCourses };

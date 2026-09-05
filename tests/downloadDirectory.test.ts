@@ -86,7 +86,29 @@ describe('download directory source of truth', () => {
     expect(() => clearDownloadDirectory(path.parse(tempRoot).root)).toThrow('Refusing to clear');
     expect(() => clearDownloadDirectory(os.homedir())).toThrow('Refusing to clear');
   });
+
+  it('refuses home roots even when the casing differs (Windows-style paths)', () => {
+    const home = os.homedir();
+    // path.resolve does not normalize casing, so a differently-cased home
+    // path must still be caught by the guard.
+    const flipped = home
+      .split(/[\\/]/)
+      .map((segment, index) => (index === 0 || segment === '' ? segment : flipCase(segment)))
+      .join(path.sep);
+    if (flipCase(home) !== home) {
+      expect(() => clearDownloadDirectory(flipped)).toThrow('Refusing to clear');
+    }
+    // An ancestor of home (e.g. C:\Users) must also be refused.
+    const parent = path.dirname(home);
+    if (parent !== path.parse(parent).root && parent !== home) {
+      expect(() => clearDownloadDirectory(parent)).toThrow('Refusing to clear');
+    }
+  });
 });
+
+function flipCase(value: string): string {
+  return value === value.toLowerCase() ? value.toUpperCase() : value.toLowerCase();
+}
 
 describe('blocked course filtering', () => {
   it('removes blocked courses before applying the optional search filter', () => {

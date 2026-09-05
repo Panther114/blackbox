@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-05
+
+### Added
+- Automation section (between Agent Skills and Settings) with batch G-number downloading: each G-number logs into its own headless Blackboard session, course lists are kept session-only, and every unique course is downloaded exactly once across all numbers.
+- Parallel automation sessions (default 4) with per-file concurrency; login failures abort only the affected G-number.
+- Real-time automation run log written into the automation download directory root: `automation-runlog.json`, `automation-runlog.xlsx` (failed logins, courses per G-number, summary) and a separate `automation-debug.json`.
+- Independent automation settings: paste-in G-number list (popup), dedicated download directory (must differ from the normal download directory), per-file maximum size (default 100 MB) and excluded extensions (default .mp3, .mp4).
+- Obscura headless-engine integration as a testing example: CDP backend with stealth/proxy support, screenshot/PDF capture, and the `blackbox obscura-check` CLI command.
+
+### Fixed
+- Login no longer fails when Blackboard's cookie/privacy consent dialog blocks the login button; the dialog is dismissed and the click retried.
+- Download retries no longer inflate failure counts or byte progress; failures are reported once.
+- Truncated downloads are no longer saved as complete (Content-Length verification); 4xx and disk-full errors fail fast instead of retrying.
+- Allowlisted-but-unsupported files are reported as rejected in summaries.
+- Harness skill files with a stripped managed marker can now be repaired and removed.
+- Agent exports use safe backup-then-swap writes and accurate per-file statuses; zero-point items and special characters are preserved in frontmatter.
+- Settings: "Run again" no longer sends the password mask as a real password, saved passwords can be cleared, legacy credential migration is resumable, and update-check toggles apply immediately.
+
 ## [1.0.2] - 2026-08-28
 
 ### Added

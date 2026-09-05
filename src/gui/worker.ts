@@ -1,6 +1,8 @@
 import { compactConfigOverrides, getConfig } from '../config';
 import { writeRunSummary, RunSummaryReport } from '../utils/runSummary';
 import { DownloadWorkflow } from '../workflow/downloadWorkflow';
+import { AutomationRunner } from '../automation';
+import { AutomationSettings } from '../automation/types';
 import {
   WorkerCommandMap,
   WorkerCommandMessage,
@@ -17,6 +19,7 @@ let runState = {
   filesSelected: 0,
   filesDownloaded: 0,
   filesSkipped: 0,
+  filesRejected: 0,
   filesFailed: 0,
   instructionCoursesSelected: 0,
   instructionsDiscovered: 0,
@@ -53,6 +56,7 @@ function resetRunState(): void {
     filesSelected: 0,
     filesDownloaded: 0,
     filesSkipped: 0,
+    filesRejected: 0,
     filesFailed: 0,
     instructionCoursesSelected: 0,
     instructionsDiscovered: 0,
@@ -73,6 +77,7 @@ function buildRunSummaryReport(runError?: string): RunSummaryReport {
     filesSelected: runState.filesSelected,
     filesDownloaded: runState.filesDownloaded,
     filesSkipped: runState.filesSkipped + runState.skippedOnDisk,
+    filesRejected: runState.filesRejected,
     filesFailed: runState.filesFailed,
     failedFiles: runState.failedFiles,
     instructionCoursesSelected: runState.instructionCoursesSelected,
@@ -154,6 +159,7 @@ async function startWorkflow(payload: WorkerCommandMap['startWorkflow'] = {}): P
     'download:complete',
     'download:error',
     'download:skip',
+    'download:rejected',
     'summary:ready',
   ];
 
@@ -170,6 +176,10 @@ async function startWorkflow(payload: WorkerCommandMap['startWorkflow'] = {}): P
   });
   workflow.on('download:skip', () => {
     runState.filesSkipped += 1;
+  });
+  workflow.on('download:rejected', (rejected: { filename: string; reason?: string }) => {
+    runState.filesRejected += 1;
+    sendLog('debug', `Rejected file type: ${rejected.filename}`);
   });
 
   await workflow.initialize();
@@ -221,6 +231,7 @@ async function download(payload: WorkerCommandMap['download']): Promise<WorkerRe
     filesSelected: runState.filesSelected,
     filesDownloaded: runState.filesDownloaded,
     filesSkipped: runState.filesSkipped + runState.skippedOnDisk,
+    filesRejected: runState.filesRejected,
     filesFailed: runState.filesFailed,
     failedFiles: runState.failedFiles,
     instructionCoursesSelected: runState.instructionCoursesSelected,
@@ -247,6 +258,19 @@ async function shutdown(): Promise<WorkerResponseMap['shutdown']> {
   return { ok: true };
 }
 
+/**
+ * Batch automation run: one headless Blackboard session per G-number, with
+ * course dedupe across sessions. Events stream to the renderer in real time
+ * and the JSON/XLSX run log is written into the automation download directory.
+ */
+async function automationRun(payload: WorkerCommandMap['automationRun']): Promise<WorkerResponseMap['automationRun']> {
+  const settings = payload?.settings as AutomationSettings | undefined;
+  if (!settings) throw new Error('Automation settings are missing.');
+  await cleanupWorkflow();
+  const runner = new AutomationRunner(settings, (event) => sendEvent(event.type, event.payload));
+  return runner.run();
+}
+
 async function handleCommand(
   message: WorkerCommandMessage,
 ): Promise<WorkerResponseMap[WorkerCommandType]> {
@@ -259,6 +283,8 @@ async function handleCommand(
       return discoverFiles(message.payload as WorkerCommandMap['discoverFiles']);
     case 'download':
       return download(message.payload as WorkerCommandMap['download']);
+    case 'automationRun':
+      return automationRun(message.payload as WorkerCommandMap['automationRun']);
     case 'cleanup':
       return cleanup();
     case 'shutdown':
@@ -285,7 +311,9 @@ async function processLine(line: string): Promise<void> {
     const data = await handleCommand(message);
     send({ kind: 'response', id: message.id, ok: true, data });
     if (message.command === 'shutdown') {
-      process.exit(0);
+      // Wait for the pipe write to flush before exiting, otherwise the
+      // shutdown response can be truncated on Windows.
+      process.stdout.write('', () => process.exit(0));
     }
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);

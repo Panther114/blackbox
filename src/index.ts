@@ -85,6 +85,7 @@ export class BlackboxDownloader extends EventEmitter {
     this.downloader.on('download:complete', (data) => this.emit('download:complete', data));
     this.downloader.on('download:error', (data) => this.emit('download:error', data));
     this.downloader.on('download:skip', (data) => this.emit('download:skip', data));
+    this.downloader.on('download:rejected', (data) => this.emit('download:rejected', data));
     this.downloader.on('files:metadata:progress', (data) => this.emit('files:metadata:progress', data));
     this.downloader.on('files:metadata:complete', (data) => this.emit('files:metadata:complete', data));
 
@@ -230,7 +231,7 @@ export class BlackboxDownloader extends EventEmitter {
             warnings.push(`Could not open ${course.name} / ${link.title}`);
             continue;
           }
-          const found = await this.discoverContentFolder(course, link.title, [], includeInstructions, true, 0);
+          const found = await this.discoverContentFolder(course, link.title, [], includeInstructions, true, 0, false);
           items.push(...found.items);
           files.push(...found.files);
         }
@@ -334,10 +335,13 @@ export class BlackboxDownloader extends EventEmitter {
     includeInstructions: boolean,
     includeFiles: boolean,
     depth: number,
+    createDirectories = true,
   ): Promise<{ items: ContentItem[]; files: DiscoveredFile[] }> {
     if (!this.scraper || depth >= MAX_DISCOVER_DEPTH) return { items: [], files: [] };
     const currentPath = path.join(this.config.downloadDir, course.path, sanitizeFilename(sectionName), ...folderPath.map(sanitizeFilename));
-    if (includeFiles) ensureDirectory(currentPath);
+    // Read-only discovery passes createDirectories=false so a content-only
+    // scan never litters the download directory with empty folders.
+    if (createDirectories) ensureDirectory(currentPath);
     const items = includeInstructions ? await this.scraper.getContentItems(course, sectionName, folderPath) : [];
     const rawFiles = includeFiles ? await this.scraper.getDownloadableFiles(currentPath) : [];
     const files: DiscoveredFile[] = rawFiles.map(file => ({
@@ -450,19 +454,21 @@ export class BlackboxDownloader extends EventEmitter {
 
   /**
    * Download only the files the user selected in the GUI.
+   * Returns a per-URL outcome map so callers can report accurate statuses.
    */
-  async downloadSelected(files: DiscoveredFile[]): Promise<void> {
+  async downloadSelected(files: DiscoveredFile[]): Promise<Record<string, { status: string; error?: string }>> {
     if (!this.downloader) {
       throw new Error('Not initialized. Call initialize() first.');
     }
 
     if (files.length === 0) {
       log.warn('No files to download');
-      return;
+      return {};
     }
 
-    await this.downloader.downloadSelected(files);
+    const outcomes = await this.downloader.downloadSelected(files);
     this.printStats();
+    return outcomes;
   }
 
   // ---------------------------------------------------------------------------

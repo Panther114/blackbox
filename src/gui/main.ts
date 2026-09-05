@@ -23,6 +23,11 @@ import { checkForUpdates, downloadUpdate, getUpdateState, initializeUpdater, ins
 import { AgentService } from '../agent/service';
 import { DownloadDatabase } from '../database';
 import { clearDownloadDirectory } from '../downloadDirectory';
+import {
+  loadAutomationSettings,
+  saveAutomationSettings,
+  validateAutomationSettings,
+} from '../automation/settings';
 
 const WORKER_NATIVE_MODULE_ERROR =
   'GUI worker failed to start because a packaged native dependency could not load. Reinstall the application and run Diagnostics.';
@@ -91,7 +96,11 @@ function startPackagedMcpServer(): void {
 
 const pendingWorkerRequests = new Map<
   string,
-  { resolve: (value: unknown) => void; reject: (reason: Error) => void }
+  {
+    resolve: (value: unknown) => void;
+    reject: (reason: Error) => void;
+    command?: WorkerCommandType;
+  }
 >();
 
 function isDevGui(): boolean {
@@ -161,14 +170,17 @@ function isNativeModuleAbiError(message: string): boolean {
   );
 }
 
-function normalizeWorkerError(message: string): string {
+function normalizeWorkerError(message: string, command?: WorkerCommandType): string {
   const trimmed = message
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
     .trim();
   if (/No automation browser is available|Executable doesn't exist|Looks like Playwright was just installed|playwright.*browser.*(missing|not installed)/i.test(trimmed)) {
     return 'No automation browser is installed. Install Microsoft Edge or Playwright Chromium, then retry.';
   }
-  if (/page\.goto:\s*Timeout|navigation timeout|Timeout \d+ms exceeded.*waiting until "commit"|ERR_CONNECTION_(REFUSED|TIMED_OUT|RESET)|ERR_NAME_NOT_RESOLVED|ENETUNREACH|ECONNREFUSED|ETIMEDOUT/i.test(trimmed)) {
+  // The "login page" wording is only accurate for the workflow-start phase,
+  // where the browser is launched and the login page is opened. The same
+  // network error during file discovery or download is not a login problem.
+  if (command === 'startWorkflow' && /page\.goto:\s*Timeout|navigation timeout|Timeout \d+ms exceeded.*waiting until "commit"|ERR_CONNECTION_(REFUSED|TIMED_OUT|RESET)|ERR_NAME_NOT_RESOLVED|ENETUNREACH|ECONNREFUSED|ETIMEDOUT/i.test(trimmed)) {
     return 'Blackboard did not respond while opening the login page. Check your connection or VPN, then retry.';
   }
   if (isNativeModuleAbiError(trimmed)) {
@@ -207,7 +219,7 @@ function handleWorkerMessage(message: WorkerOutgoingMessage): void {
     if (message.ok) {
       pending.resolve(message.data);
     } else {
-      pending.reject(new Error(normalizeWorkerError(message.error || 'Worker command failed')));
+      pending.reject(new Error(normalizeWorkerError(message.error || 'Worker command failed', pending.command)));
     }
     return;
   }
@@ -326,6 +338,7 @@ function sendWorkerCommand<T extends WorkerCommandType>(
     pendingWorkerRequests.set(id, {
       resolve: value => resolve(value as WorkerResponseMap[T]),
       reject,
+      command,
     });
 
     activeWorker.stdin.write(message + '\n', writeError => {
@@ -346,11 +359,15 @@ async function invokeWorkerCommand<T extends WorkerCommandType>(
 
 async function stopGuiWorker(): Promise<void> {
   if (!worker) return;
-  try {
-    await sendWorkerCommand('shutdown', {});
-  } catch {
-    // no-op
-  }
+  // Worker commands are serialized behind an in-flight download, so a plain
+  // shutdown command can queue for minutes during a long run. Give it a short
+  // window to exit cleanly, then force-kill so operations like clearing the
+  // download directory never hang the UI.
+  const gracefulShutdown = sendWorkerCommand('shutdown', {}).catch(() => undefined);
+  await Promise.race([
+    gracefulShutdown,
+    new Promise(resolve => setTimeout(resolve, 3_000)),
+  ]);
 
   if (worker && !worker.killed) {
     worker.kill();
@@ -467,6 +484,21 @@ async function runDoctor(loginTest: boolean): Promise<DoctorCheck[]> {
   return checks;
 }
 
+let autoUpdateTimers: Array<NodeJS.Timeout> = [];
+
+/**
+ * (Re)schedule automatic update checks. Called at startup and again whenever
+ * the autoCheckUpdates setting is saved, so toggling the setting takes effect
+ * immediately instead of requiring an app restart.
+ */
+function scheduleAutoUpdateChecks(enabled: boolean): void {
+  for (const timer of autoUpdateTimers) clearTimeout(timer);
+  autoUpdateTimers = [];
+  if (!enabled) return;
+  autoUpdateTimers.push(setTimeout(() => void checkForUpdates().catch(() => undefined), 10_000));
+  autoUpdateTimers.push(setInterval(() => void checkForUpdates().catch(() => undefined), 6 * 60 * 60 * 1000) as unknown as NodeJS.Timeout);
+}
+
 async function initializeDesktopApp(): Promise<void> {
   app.setAppUserModelId('com.panther114.blackbox');
   const appPaths = ensureAppPaths();
@@ -499,10 +531,7 @@ async function initializeDesktopApp(): Promise<void> {
   }
   initializeUpdater(state => sendWorkflowEvent('update:state', state));
   const settings = desktopStore.loadSettings();
-  if (settings.autoCheckUpdates) {
-    setTimeout(() => void checkForUpdates().catch(() => undefined), 10_000);
-    setInterval(() => void checkForUpdates().catch(() => undefined), 6 * 60 * 60 * 1000);
-  }
+  scheduleAutoUpdateChecks(settings.autoCheckUpdates);
 
   ipcMain.handle('app:get-version', event => { assertTrustedSender(event); return appVersion(); });
 
@@ -537,10 +566,20 @@ async function initializeDesktopApp(): Promise<void> {
       autoCheckUpdates: payload.autoCheckUpdates === undefined ? current.autoCheckUpdates : Boolean(payload.autoCheckUpdates),
       blockedCourses: normalizeBlockedCourses(payload.blockedCourses ?? current.blockedCourses),
     });
-    const password = String(payload.password || '');
-    if (password) await desktopStore.setPassword(password);
+    // `undefined` keeps the stored password; an explicitly empty string clears
+    // it. Conflating the two made it impossible to remove a saved password.
+    if (payload.password === undefined) {
+      // keep stored password
+    } else if (String(payload.password) === '') {
+      desktopStore.clearPassword();
+    } else {
+      await desktopStore.setPassword(String(payload.password));
+    }
     await desktopStore.applyToEnvironment();
+    scheduleAutoUpdateChecks(desktopStore.loadSettings().autoCheckUpdates);
 
+    let loginTestPassed: boolean | undefined;
+    let loginTestError: string | undefined;
     if (payload.testLogin) {
       const cfg = getConfig(compactConfigOverrides({ headless: payload.headless }));
       let auth: BlackboardAuth | null = null;
@@ -548,12 +587,19 @@ async function initializeDesktopApp(): Promise<void> {
         auth = new BlackboardAuth(cfg);
         await auth.launchBrowser();
         await auth.login();
+        loginTestPassed = true;
+      } catch (error) {
+        loginTestPassed = false;
+        loginTestError = error instanceof Error ? error.message : String(error);
       } finally {
         if (auth) await auth.close();
       }
     }
 
-    return { ok: true };
+    // Settings are always saved before the login test runs; the structured
+    // result lets the UI say "saved, but the test failed" instead of implying
+    // nothing was persisted.
+    return { ok: true, loginTestPassed, ...(loginTestError ? { loginTestError } : {}) };
   });
 
   ipcMain.handle('setup:reset', async event => {
@@ -585,9 +631,7 @@ async function initializeDesktopApp(): Promise<void> {
     const blockedCourses = desktopStore.loadSettings().blockedCourses;
     return invokeWorkerCommand('discoverCourses', {
       filterPattern: payload?.filterPattern,
-      excludeCourseIds: payload?.includeBlocked
-        ? []
-        : blockedCourses.map(course => course.id),
+      excludeCourseIds: blockedCourses.map(course => course.id),
     });
   });
 
@@ -667,6 +711,60 @@ async function initializeDesktopApp(): Promise<void> {
     };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0] || null;
+  });
+
+  // -------------------------------------------------------------------------
+  // Automation (independent settings, download dir and run log)
+  // -------------------------------------------------------------------------
+
+  ipcMain.handle('automation:load-settings', event => {
+    assertTrustedSender(event);
+    return {
+      settings: loadAutomationSettings(),
+      normalDownloadDir: path.resolve(desktopStore.loadSettings().downloadDir),
+    };
+  });
+
+  ipcMain.handle('automation:save-settings', (event, payload) => {
+    assertTrustedSender(event);
+    const currentNormalDownloadDir = desktopStore.loadSettings().downloadDir;
+    const saved = saveAutomationSettings(
+      {
+        gnumbers: Array.isArray(payload?.gnumbers) ? payload.gnumbers.map((value: unknown) => String(value)) : [],
+        downloadDir: String(payload?.downloadDir || ''),
+        maxFileSizeBytes: Number(payload?.maxFileSizeBytes),
+        excludedExtensions: Array.isArray(payload?.excludedExtensions)
+          ? payload.excludedExtensions.map((value: unknown) => String(value))
+          : [],
+      },
+      currentNormalDownloadDir,
+    );
+    return { ok: true, settings: saved };
+  });
+
+  ipcMain.handle('automation:choose-directory', async event => {
+    assertTrustedSender(event);
+    const current = loadAutomationSettings().downloadDir;
+    const options = {
+      defaultPath: path.resolve(current),
+      properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
+      title: 'Choose the automation download directory',
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0] || null;
+  });
+
+  ipcMain.handle('automation:open-directory', async event => {
+    assertTrustedSender(event);
+    return shell.openPath(path.resolve(loadAutomationSettings().downloadDir));
+  });
+
+  ipcMain.handle('automation:start-run', async event => {
+    assertTrustedSender(event);
+    const settings = loadAutomationSettings();
+    const validation = validateAutomationSettings(settings, desktopStore.loadSettings().downloadDir);
+    if (!validation.ok) throw new Error(validation.error);
+    return invokeWorkerCommand('automationRun', { settings });
   });
 
   ipcMain.handle('settings:scan-courses', async (event, payload) => {

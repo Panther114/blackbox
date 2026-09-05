@@ -12,6 +12,15 @@ import { getConfig } from './config';
 import { Config, Course, DiscoveredFile } from './types';
 import { formatBytes } from './utils/helpers';
 import { BlackboardAuth } from './auth';
+import {
+  capturePageArtifacts,
+  isObscuraBinaryRunnable,
+  launchObscuraSession,
+  obscuraFetch,
+  resolveObscuraBinary,
+  assertObscuraUsable,
+  ObscuraSession,
+} from './auth/obscura';
 import { readEnvFile, writeEnvFile } from './utils/envFile';
 import {
   checkAutomationBrowserAvailable,
@@ -101,7 +110,7 @@ program
 program
   .name('blackbox')
   .description('Blackbox downloader for course materials from SHSID BlackboardChina')
-  .version('1.0.2');
+  .version('1.1.0');
 
 function isDebugMode(): boolean {
   return process.env.DEBUG === '1' || process.env.LOG_LEVEL === 'debug';
@@ -450,6 +459,7 @@ program
       filesSelected: 0,
       filesDownloaded: 0,
       filesSkipped: 0,
+      filesRejected: 0,
       filesFailed: 0,
       failedFiles: [] as Array<{ name: string; reason: string }>,
       logFilePath: './logs/blackbox.log',
@@ -460,7 +470,7 @@ program
     let workflow: DownloadWorkflow | null = null;
 
     try {
-      console.log(chalk.bold.cyan('\n🎓 Blackbox v1.0.2\n'));
+      console.log(chalk.bold.cyan('\n🎓 Blackbox v1.1.0\n'));
 
       let username = options.username;
       let password = options.password;
@@ -530,6 +540,7 @@ program
       let completedFiles = 0;
       let failedFiles = 0;
       let skippedFiles = 0;
+      let rejectedFiles = 0;
       let skippedOnDisk = 0;
 
       try {
@@ -745,6 +756,23 @@ program
           bar.update(barValue, barPayload());
         });
 
+        workflow.on('download:rejected', (data: { url: string; filename: string }) => {
+          rejectedFiles++;
+          console.log(
+            chalk.yellow(
+              `\n   ↳ Rejected "${data.filename}" — not an allowed document type (see file-type settings)`
+            )
+          );
+          const knownSize = knownFileSizes.get(data.url);
+          if (knownSize !== undefined) {
+            const prev = fileDownloaded.get(data.url) ?? 0;
+            fileDownloaded.set(data.url, Math.max(prev, knownSize));
+          }
+          refreshSpeed();
+          const barValue = useByteProgress ? totalDownloadedKnownBytes : completedFiles + skippedFiles;
+          bar.update(barValue, barPayload());
+        });
+
         singleBar.start(progressBarTotal, 0, {
           completedFiles: 0,
           totalFilesCount,
@@ -769,6 +797,7 @@ program
         report.filesDownloaded = completedFiles;
         report.filesFailed = failedFiles;
         report.filesSkipped = skippedFiles + skippedOnDisk;
+        report.filesRejected = rejectedFiles;
 
         console.log('\n' + chalk.bold('─'.repeat(55)));
         console.log(chalk.bold.cyan('  DOWNLOAD SUMMARY'));
@@ -779,6 +808,9 @@ program
         console.log(`  ${chalk.gray('  Skipped')}    ${chalk.white(String(skippedFiles))}`);
         if (skippedOnDisk > 0) {
           console.log(`  ${chalk.gray('  On disk')}    ${chalk.white(String(skippedOnDisk))}`);
+        }
+        if (rejectedFiles > 0) {
+          console.log(`  ${chalk.yellow('  Rejected')}   ${chalk.white(String(rejectedFiles))}`);
         }
         console.log(chalk.bold('─'.repeat(55)));
         console.log(chalk.green.bold(`\n✓ All done!\nSummary saved to logs/latest-summary.txt\n`));
@@ -933,5 +965,61 @@ async function selectFilesInteractively(files: DiscoveredFile[]): Promise<Discov
 
   return (answers.selectedFiles as DiscoveredFile[]) || [];
 }
+
+program
+  .command('obscura-check')
+  .description('Testing example: verify the Obscura Rust headless engine end to end (serve, CDP, stealth, fetch, screenshot, PDF)')
+  .option('--url <url>', 'Page to load through the Obscura session', 'https://example.com')
+  .option('--no-capture', 'Skip the screenshot/PDF capture step')
+  .action(async (options: { url?: string; capture?: boolean }) => {
+    const config = getConfig({ browserBackend: 'obscura', headless: true });
+    const target = options.url || 'https://example.com';
+    const binary = resolveObscuraBinary(config);
+
+    console.log(chalk.bold.cyan('\n🔬 Obscura backend check\n'));
+    console.log(chalk.gray(`Binary: ${binary}`));
+
+    if (!isObscuraBinaryRunnable(binary)) {
+      console.log(chalk.red('✗ Obscura is not runnable. Install it (https://docs.obscura.sh) or set OBSCURA_BINARY.'));
+      process.exitCode = 1;
+      return;
+    }
+    console.log(chalk.green('✓ Obscura binary is runnable'));
+
+    const spinner = ora('Starting obscura serve and connecting over CDP...').start();
+    let session: ObscuraSession | null = null;
+    try {
+      assertObscuraUsable(config);
+      session = await launchObscuraSession(config, config.obscuraPort || 9223);
+      spinner.succeed(`Connected over CDP (${session.serve.endpoint})`);
+
+      spinner.start(`Fetching ${target}...`);
+      await session.page.goto(target, { timeout: config.browserTimeout });
+      const title = await session.page.title();
+      spinner.succeed(`Page loaded: "${title || target}"`);
+
+      const fetchResult = await obscuraFetch(config, target, { eval: 'document.title', format: 'text', timeoutMs: config.browserTimeout });
+      if (fetchResult.exitCode === 0) {
+        console.log(chalk.green(`✓ obscura fetch works: ${fetchResult.stdout.trim().split(/\r?\n/)[0] || '(empty title)'}`));
+      } else {
+        console.log(chalk.yellow(`! obscura fetch exited with code ${fetchResult.exitCode}${fetchResult.stderr ? `: ${fetchResult.stderr.trim().split(/\r?\n/)[0]}` : ''}`));
+      }
+
+      if (options.capture !== false) {
+        spinner.start('Capturing screenshot and PDF (native rendering)...');
+        const artifacts = await capturePageArtifacts(session.page, config.downloadDir, 'obscura-check');
+        spinner.succeed(`Screenshot: ${artifacts.screenshotPath}`);
+        console.log(chalk.green(`✓ PDF: ${artifacts.pdfPath}`));
+      }
+
+      console.log(chalk.green.bold('\n✓ Obscura backend check passed.\n'));
+    } catch (error) {
+      spinner.fail('Obscura backend check failed');
+      console.log(chalk.red(formatUserError(mapToUserError(error))));
+      process.exitCode = 1;
+    } finally {
+      if (session) await session.close();
+    }
+  });
 
 void program.parseAsync();

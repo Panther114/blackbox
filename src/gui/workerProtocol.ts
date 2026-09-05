@@ -1,11 +1,13 @@
 import { Course, DiscoveredFile } from '../types';
 import { WorkflowSummary } from '../workflow/types';
+import { AutomationRunSummary, AutomationSettings } from '../automation/types';
 
 export type WorkerCommandType =
   | 'startWorkflow'
   | 'discoverCourses'
   | 'discoverFiles'
   | 'download'
+  | 'automationRun'
   | 'cleanup'
   | 'shutdown';
 
@@ -27,6 +29,9 @@ export interface WorkerCommandMap {
     files: DiscoveredFile[];
     instructionCourses?: Course[];
   };
+  automationRun: {
+    settings: AutomationSettings;
+  };
   cleanup: Record<string, never>;
   shutdown: Record<string, never>;
 }
@@ -41,6 +46,7 @@ export interface WorkerResponseMap {
     skippedOnDisk: number;
   };
   download: WorkflowSummary;
+  automationRun: AutomationRunSummary;
   cleanup: { ok: true };
   shutdown: { ok: true };
 }

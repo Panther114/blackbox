@@ -5,7 +5,7 @@ import http from 'http';
 import https from 'https';
 import { EventEmitter } from 'events';
 import pLimit from 'p-limit';
-import pRetry from 'p-retry';
+import pRetry, { AbortError } from 'p-retry';
 import { Config, DiscoveredFile, DownloadableFile, FileTree } from '../types';
 import { log } from '../utils/logger';
 import {
@@ -17,6 +17,7 @@ import {
   extractFilenameFromUrl,
   parseContentDisposition,
   formatBytes,
+  sleep,
 } from '../utils/helpers';
 import {
   getAllowedExtFromName,
@@ -31,6 +32,7 @@ import {
   isDownloadPresent,
   scanDownloadDirectory,
 } from '../downloadDirectory';
+import { getFreeDiskSpace, LOW_DISK_SPACE_BYTES } from '../utils/helpers';
 
 /** Milliseconds without data before a download stream is considered stalled. */
 const INACTIVITY_TIMEOUT_MS = 30_000;
@@ -40,6 +42,26 @@ const HEAD_REQUEST_TIMEOUT_MS = 5_000;
 
 /** MIME type prefixes that indicate audio/video content (blocked). */
 const BLOCKED_MEDIA_MIME_PREFIXES = ['video/', 'audio/'];
+
+/** Final per-URL outcome reported back to callers of downloadFiles(). */
+export type DownloadOutcome = 'completed' | 'skipped' | 'rejected' | 'failed';
+
+/**
+ * Decide whether a failed download attempt is worth retrying. Permanent HTTP
+ * failures (4xx other than 429) and a full disk must fail fast instead of
+ * re-downloading `maxRetries` times.
+ */
+export function isRetryableDownloadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/ENOSPC/i.test(message)) return false;
+  const statusMatch = message.match(/HTTP (\d{3})/);
+  if (statusMatch) {
+    const status = Number(statusMatch[1]);
+    // Retry server errors and rate limiting; never retry permanent client errors.
+    return status >= 500 || status === 429;
+  }
+  return true;
+}
 
 /**
  * Normalize Axios header values to a plain string.
@@ -218,19 +240,28 @@ export class FileDownloader extends EventEmitter {
    * the final path.  On any failure the .tmp file is deleted so partial
    * downloads never accumulate on disk.
    */
-  private async downloadFile(file: DownloadableFile): Promise<void> {
+  private async downloadFile(file: DownloadableFile): Promise<DownloadOutcome> {
     // Skip only when the current configured download directory contains the
     // target. Download history is intentionally not a source of truth because
     // users can move or delete files outside the application.
     if (isDownloadPresent(this.indexedDownloadFiles, file.path, file.name)) {
       log.debug(`Skipping already downloaded file: ${file.name}`);
       this.emit('download:skip', { url: file.url, filename: file.name });
-      return;
+      return 'skipped';
     }
 
-    const downloadFn = async () => {
-      log.info(`Downloading: ${file.name}`);
-      this.emit('download:start', file);
+    // Events are emitted exactly once per file: `download:start` before the
+    // first attempt, `download:error` only after every retry is exhausted.
+    // This keeps failure counts and byte progress truthful across retries.
+    log.info(`Downloading: ${file.name}`);
+    this.emit('download:start', file);
+
+    let resolvedName = file.name;
+    // Final outcome for the file, refined by whichever attempt resolves the
+    // filename. Failed attempts throw and are handled by the retry tail.
+    let attemptOutcome: DownloadOutcome = 'completed';
+
+    const downloadFn = async (): Promise<void> => {
 
       let finalPath: string | null = null;
       let tmpPath: string | null = null;
@@ -238,7 +269,9 @@ export class FileDownloader extends EventEmitter {
       try {
         const response = await this.axios.get(file.url, { responseType: 'stream' });
 
-        if (response.status !== 200) {
+        // Axios rejects non-2xx by default; this guard accepts the whole 2xx
+        // range (e.g. 206) instead of only 200.
+        if (response.status < 200 || response.status >= 300) {
           throw new Error(`HTTP ${response.status}`);
         }
 
@@ -270,7 +303,8 @@ export class FileDownloader extends EventEmitter {
           log.warn(
             `Skipping file not in strict allowlist: name="${filename}", mime="${mimeType ?? '(none)'}", url="${file.url}"`
           );
-          this.emit('download:skip', { url: file.url, filename });
+          this.emit('download:rejected', { url: file.url, filename, reason: 'not-in-allowlist' });
+          attemptOutcome = 'rejected';
           return;
         }
 
@@ -282,17 +316,20 @@ export class FileDownloader extends EventEmitter {
             `Skipping file not in strict allowlist: ` +
               `name="${filename}", mime="${mimeType ?? '(none)'}", url="${file.url}"`
           );
-          this.emit('download:skip', { url: file.url, filename });
+          this.emit('download:rejected', { url: file.url, filename, reason: 'blocked-type' });
+          attemptOutcome = 'rejected';
           return;
         }
 
         filename = sanitizeFilename(filename);
+        resolvedName = filename;
 
         // HEAD metadata may have exposed a server-side filename different from
         // the discovery label. Recheck the actual target after resolving it.
         if (isDownloadPresent(this.indexedDownloadFiles, file.path, filename)) {
           log.debug('Skipping already downloaded file on disk: ' + filename);
           this.emit('download:skip', { url: file.url, filename });
+          attemptOutcome = 'skipped';
           return;
         }
 
@@ -307,6 +344,10 @@ export class FileDownloader extends EventEmitter {
 
         // Track download progress with an inactivity watchdog.
         const totalSize = parseInt(getHeaderString(response.headers['content-length']) || '0', 10);
+        const contentEncoding = getHeaderString(response.headers['content-encoding']);
+        // When the response is compressed, Content-Length describes the wire
+        // bytes, not the decompressed stream — skip verification in that case.
+        const sizeIsTrustworthy = totalSize > 0 && !contentEncoding;
         let downloadedSize = 0;
         let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -353,9 +394,21 @@ export class FileDownloader extends EventEmitter {
           });
         });
 
+        // A connection that closes cleanly mid-body still resolves the writer.
+        // Verify the byte count so a truncated file is never saved as complete.
+        if (sizeIsTrustworthy && downloadedSize !== totalSize) {
+          throw new Error(
+            `Download truncated: received ${downloadedSize} of ${totalSize} bytes for ${filename}`
+          );
+        }
+
         // Rename the finished .tmp file to the final path.
         fs.renameSync(tmpPath, finalPath);
         tmpPath = null; // no cleanup needed
+        // The file now exists on disk, so the reservation is no longer needed.
+        // Releasing it here keeps the reservation set clean for the lifetime of
+        // the process (e.g. a GUI worker that serves many runs).
+        releaseReservedPath(finalPath);
 
         const fileSize = fs.statSync(finalPath).size;
         this.db.upsertDownload({
@@ -374,31 +427,35 @@ export class FileDownloader extends EventEmitter {
         this.emit('download:complete', { url: file.url, filename, size: fileSize });
         log.info(`✓ Saved: ${filename} (${formatBytes(fileSize)})`);
       } catch (error: any) {
-        // Clean up any partial .tmp file.
+        // Clean up any partial .tmp file. Stream destruction is asynchronous,
+        // so a plain unlinkSync can hit EPERM/EBUSY on Windows; retry briefly.
         if (tmpPath) {
-          try {
-            fs.unlinkSync(tmpPath);
-          } catch {
-            /* ignore */
+          const doomedTmpPath = tmpPath;
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+              fs.unlinkSync(doomedTmpPath);
+              break;
+            } catch (unlinkError: any) {
+              if (attempt === 2) {
+                log.debug(`Could not remove temporary file ${doomedTmpPath}: ${unlinkError.message}`);
+              } else {
+                await sleep(100);
+              }
+            }
           }
         }
         // Release the path reservation so future retries can reclaim it.
+        // (Deleting a non-existent reservation is harmless.)
         if (finalPath) {
           releaseReservedPath(finalPath);
-          finalPath = null;
         }
 
         log.error(`Failed to download ${file.name}: ${error.message}`);
-        this.emit('download:error', { url: file.url, filename: file.name, error: error.message });
-
-        this.db.upsertDownload({
-          url: file.url,
-          path: file.path,
-          filename: file.name,
-          status: 'failed',
-          error: error.message,
-        });
-
+        // Permanent failures (4xx, disk full) must not be retried: wrapping in
+        // AbortError stops pRetry immediately while keeping the message.
+        if (!isRetryableDownloadError(error)) {
+          throw new AbortError(error.message);
+        }
         throw error;
       }
     };
@@ -414,9 +471,23 @@ export class FileDownloader extends EventEmitter {
           );
         },
       });
-    } catch {
+    } catch (error: any) {
+      // Retry handling is complete: report the failure exactly once, using the
+      // most specific name the attempts resolved to.
+      this.emit('download:error', { url: file.url, filename: resolvedName, error: error.message });
+
+      this.db.upsertDownload({
+        url: file.url,
+        path: file.path,
+        filename: resolvedName,
+        status: 'failed',
+        error: error.message,
+      });
+
       log.error(`Failed to download ${file.name} after ${this.config.maxRetries} retries`);
+      return 'failed';
     }
+    return attemptOutcome;
   }
 
   // ---------------------------------------------------------------------------
@@ -465,29 +536,56 @@ export class FileDownloader extends EventEmitter {
    * Download multiple files concurrently, honouring the global p-limit queue.
    * All files are submitted at once so the limiter can schedule them optimally
    * instead of being constrained to a single folder's batch.
+   *
+   * Returns a per-URL outcome map so callers (e.g. the agent sync) can report
+   * accurate per-file statuses instead of assuming every file succeeded.
    */
-  async downloadFiles(files: DownloadableFile[]): Promise<void> {
+  async downloadFiles(files: DownloadableFile[]): Promise<Record<string, { status: DownloadOutcome; error?: string }>> {
+    const outcomes: Record<string, { status: DownloadOutcome; error?: string }> = {};
     if (files.length === 0) {
       log.debug('No files to download');
-      return;
+      return outcomes;
     }
 
     log.info(`Starting download of ${files.length} files...`);
+
+    const freeBytes = getFreeDiskSpace(this.config.downloadDir);
+    if (freeBytes !== null && freeBytes < LOW_DISK_SPACE_BYTES) {
+      log.warn(
+        `Low disk space before downloading: ${formatBytes(freeBytes)} free in ` +
+          `${this.config.downloadDir}. Downloads may fail with ENOSPC.`
+      );
+    }
 
     // Refresh for every batch so a changed download directory or a manual
     // deletion is reflected immediately, even when this instance is reused.
     this.indexedDownloadFiles = scanDownloadDirectory(this.config.downloadDir);
 
-    await Promise.all(files.map(file => this.limiter(() => this.downloadFile(file))));
+    const results = await Promise.all(
+      files.map(file =>
+        this.limiter(async () => {
+          const outcome = await this.downloadFile(file);
+          outcomes[file.url] = { status: outcome };
+          return outcome;
+        })
+      )
+    );
 
-    log.info('Batch download completed');
+    const failedCount = results.filter(outcome => outcome === 'failed').length;
+    log.info(
+      `Batch download completed: ${results.filter(o => o === 'completed').length} downloaded, ` +
+        `${results.filter(o => o === 'skipped').length} skipped, ` +
+        `${results.filter(o => o === 'rejected').length} rejected, ` +
+        `${failedCount} failed`
+    );
+    return outcomes;
   }
 
   /**
    * Download a list of DiscoveredFile objects (from the selection GUI).
    * Converts them to DownloadableFile and delegates to downloadFiles().
    */
-  async downloadSelected(files: DiscoveredFile[]): Promise<void> {
+  async downloadSelected(files: DiscoveredFile[]): Promise<Record<string, { status: DownloadOutcome; error?: string }>> {
     const downloadable: DownloadableFile[] = files.map(f => ({
       name: f.name,
       url: f.url,
@@ -496,7 +594,7 @@ export class FileDownloader extends EventEmitter {
       mimeType: f.mimeType,
       status: 'pending' as const,
     }));
-    await this.downloadFiles(downloadable);
+    return this.downloadFiles(downloadable);
   }
 
   // ---------------------------------------------------------------------------

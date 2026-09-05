@@ -3,6 +3,7 @@ import { chromium, firefox, webkit, Browser, BrowserContext, Page } from 'playwr
 import { Config } from '../types';
 import { log } from '../utils/logger';
 import { getBundledChromiumExecutable } from './browserPath';
+import { launchObscuraSession, assertObscuraUsable, ObscuraSession } from './obscura';
 import {
   archiveCorruptCrashpad,
   archiveFailedBrowserProfile,
@@ -57,6 +58,28 @@ export function formatLoginNavigationError(error: unknown, loginUrl: string): st
 
 const LOGIN_NAVIGATION_TIMEOUT = 15000;
 const LOGIN_FORM_TIMEOUT = 6000;
+const LOGIN_CONSENT_WAIT_TIMEOUT = 2000;
+const LOGIN_CLICK_TIMEOUT = 15000;
+// Blackboard shows a cookie/privacy consent lightbox (div.lb-wrapper) that can
+// appear before or after the login form renders and intercepts clicks on the
+// login button. These selectors cover its accept button plus common cookie
+// banner implementations.
+const CONSENT_DIALOG_SELECTOR =
+  '#agree_button, #onetrust-accept-btn-handler, .lb-wrapper[role="dialog"], .lb-wrapper';
+const CONSENT_ACCEPT_SELECTORS = [
+  '#agree_button',
+  '#onetrust-accept-btn-handler',
+  '.lb-wrapper button:has-text("我同意")',
+  '.lb-wrapper button:has-text("I Agree")',
+  '.lb-wrapper button:has-text("Agree")',
+  '.lb-wrapper button:has-text("Accept")',
+  '.lb-wrapper button:has-text("确定")',
+  '.lb-wrapper button:has-text("OK")',
+  '[role="dialog"] button:has-text("我同意")',
+  '[role="dialog"] button:has-text("I Agree")',
+  '[role="dialog"] button:has-text("Agree")',
+  '[role="dialog"] button:has-text("Accept")',
+];
 const BROWSER_PROFILE_IN_USE_ERROR =
   'The Blackboard browser is already running. Finish or close the other Blackbox operation, then retry.';
 const BROWSER_PROFILE_RECOVERY_ERROR =
@@ -81,6 +104,7 @@ export class BlackboardAuth {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private config: Config;
+  private obscuraSession: ObscuraSession | null = null;
 
   constructor(config: Config) {
     this.config = config;
@@ -140,6 +164,15 @@ export class BlackboardAuth {
       await this.browser?.close();
     } catch {
       // The failed launch may already have closed its browser.
+    }
+    if (this.obscuraSession) {
+      const session = this.obscuraSession;
+      this.obscuraSession = null;
+      try {
+        if (session.serve.child && !session.serve.child.killed) session.serve.child.kill();
+      } catch {
+        // The serve process may already have exited.
+      }
     }
     this.browser = null;
     this.context = null;
@@ -296,6 +329,23 @@ export class BlackboardAuth {
     log.info(`Launching ${this.config.browserType} browser...`);
     log.debug(`Browser options: headless=${this.config.headless}, timeout=${this.config.browserTimeout}ms`);
 
+    // Obscura is an optional Rust headless engine driven over CDP. It is a
+    // testing backend for headless discovery/extraction; visible logins and
+    // persistent-profile flows must use the Chromium backends below.
+    if (this.config.browserBackend === 'obscura') {
+      if (this.config.browserType !== 'chromium') {
+        throw new Error('The Obscura backend only supports the chromium browser type.');
+      }
+      assertObscuraUsable(this.config);
+      const session = await launchObscuraSession(this.config, this.config.obscuraPort || 9223);
+      this.obscuraSession = session;
+      this.browser = session.browser;
+      this.context = session.context;
+      this.page = session.page;
+      log.info('Browser launched successfully (Obscura backend)');
+      return;
+    }
+
     const browserType = {
       chromium,
       firefox,
@@ -361,6 +411,66 @@ export class BlackboardAuth {
   }
 
   /**
+   * Waits briefly for a consent/permission dialog to appear. Unlike the old
+   * isVisible() probe, this actually waits, so a dialog rendered after the
+   * login form is still detected.
+   */
+  private async waitForConsentDialog(timeoutMs: number): Promise<boolean> {
+    if (!this.page) return false;
+    try {
+      await this.page.waitForSelector(CONSENT_DIALOG_SELECTOR, {
+        state: 'visible',
+        timeout: timeoutMs,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Clicks the accept/agree control of a visible consent dialog. Returns
+   * whether a dialog was dismissed.
+   */
+  private async dismissConsentDialog(): Promise<boolean> {
+    if (!this.page) return false;
+    for (const selector of CONSENT_ACCEPT_SELECTORS) {
+      try {
+        const button = this.page.locator(selector).first();
+        if (await button.isVisible()) {
+          await button.click({ timeout: 5000 });
+          log.debug(`Dismissed the Blackboard consent dialog using ${selector}.`);
+          return true;
+        }
+      } catch {
+        // The dialog may have closed on its own or the candidate may not be
+        // clickable; try the next selector.
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Clicks the login button, dismissing any consent dialog that intercepts
+   * the click. The dialog is optional and can appear at any moment, so both
+   * scenarios (present and absent) must succeed.
+   */
+  private async clickLoginButton(): Promise<void> {
+    if (!this.page) throw new Error('Browser page is unavailable.');
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.page.click('#entry-login', { timeout: LOGIN_CLICK_TIMEOUT });
+        return;
+      } catch (error) {
+        const dismissed = await this.dismissConsentDialog();
+        if (!dismissed || attempt === maxAttempts) throw error;
+        log.warn('A Blackboard consent dialog was blocking the login button; dismissing it and retrying.');
+      }
+    }
+  }
+
+  /**
    * Login to Blackboard
    */
   async login(): Promise<void> {
@@ -373,15 +483,11 @@ export class BlackboardAuth {
     await this.navigateToLogin();
     log.debug(`Current URL after navigation: ${this.page.url()}`);
 
-    // Handle cookie consent if present
-    try {
-      const cookieButton = await this.page.locator('#agree_button').first();
-      if (await cookieButton.isVisible({ timeout: 2000 })) {
-        await cookieButton.click();
-        log.debug('Cookie consent accepted');
-      }
-    } catch {
-      log.debug('No cookie consent button found');
+    // Handle the cookie/privacy consent dialog if it appears. It renders
+    // after the login form on BlackboardChina deployments and intercepts
+    // clicks on #entry-login, so wait for it instead of probing once.
+    if (await this.waitForConsentDialog(LOGIN_CONSENT_WAIT_TIMEOUT)) {
+      await this.dismissConsentDialog();
     }
 
     // Fill in credentials
@@ -392,7 +498,7 @@ export class BlackboardAuth {
 
     // Click login button
     log.debug('Clicking login button');
-    await this.page.click('#entry-login');
+    await this.clickLoginButton();
 
     // Blackboard keeps background requests alive, so network idle is not a
     // useful completion signal. The course selector below is the success
@@ -458,6 +564,8 @@ export class BlackboardAuth {
    * Close browser
    */
   async close(): Promise<void> {
+    const obscura = this.obscuraSession;
+    this.obscuraSession = null;
     const browser = this.browser;
     const context = this.context;
 
@@ -470,9 +578,13 @@ export class BlackboardAuth {
     }
 
     try {
-      if (browser) await browser.close();
+      if (obscura) {
+        // Closing the Obscura session also terminates the serve process.
+        await obscura.close();
+        log.info('Browser closed (Obscura backend)');
+      } else if (browser) await browser.close();
       else if (context) await context.close();
-      if (browser || context) log.info('Browser closed');
+      if (!obscura && (browser || context)) log.info('Browser closed');
     } catch (error) {
       log.warn(`Browser cleanup did not complete: ${errorMessage(error)}`);
     } finally {

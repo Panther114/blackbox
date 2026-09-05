@@ -372,6 +372,16 @@ code { padding: 1px 5px; border: 1px solid var(--line); border-radius: 5px; colo
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(46, 96, 238, 0.22); border-top-color: var(--blue); border-radius: 50%; animation: spin 620ms linear infinite; }
 .is-spinning { animation: spin 620ms linear infinite; }
 
+/* Automation -------------------------------------------------------------- */
+.state-bad { border-color: #f0c9c5; color: var(--red); background: var(--red-soft); }
+.automation-list { margin-top: 12px; border: 1px solid var(--line-soft); border-radius: 10px; overflow: hidden; max-height: 340px; overflow-y: auto; }
+.automation-row { grid-template-columns: minmax(84px, auto) minmax(84px, auto) minmax(0, 1fr) auto; }
+.automation-run { margin-top: 14px; display: grid; gap: 10px; }
+.automation-gnumber-input { width: 100%; min-height: 170px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-family: var(--font-mono); font-size: 12px; resize: vertical; background: var(--surface); color: var(--ink); }
+.automation-gnumber-input:focus { outline: 2px solid var(--blue-soft); border-color: var(--blue); }
+.modal-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgba(15, 23, 42, 0.42); backdrop-filter: blur(2px); animation: view-in 140ms ease; }
+.modal-card { width: min(560px, 100%); max-height: min(640px, 90vh); overflow-y: auto; display: grid; gap: 12px; padding: 18px; box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28); }
+
 /* Motion and responsive -------------------------------------------------- */
 @keyframes view-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes icon-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }

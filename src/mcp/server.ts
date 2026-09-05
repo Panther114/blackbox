@@ -19,7 +19,7 @@ function errorResult(error: unknown) {
 
 export async function startMcpServer(): Promise<void> {
   const service = new AgentService();
-  const server = new McpServer({ name: 'blackbox', version: '1.0.2' });
+  const server = new McpServer({ name: 'blackbox', version: '1.1.0' });
 
   server.registerTool('blackboard_status', {
     description: 'Return local BlackboardChina downloader readiness. This tool never contacts BlackboardChina or changes data.',
@@ -58,11 +58,16 @@ export async function startMcpServer(): Promise<void> {
   });
 
   server.registerTool('blackboard_get_item', {
-    description: 'Read one already-exported content item from the latest local agent manifest. Does not contact BlackboardChina.',
-    inputSchema: { item_id: z.string() },
-  }, async ({ item_id }) => {
+    description: 'Read one already-exported content item from a local agent manifest. Does not contact BlackboardChina.',
+    inputSchema: {
+      item_id: z.string(),
+      manifest_path: z.string().optional().describe('Path to a manifest.json from a sync that used a custom output_dir. Defaults to the configured download directory.'),
+    },
+  }, async ({ item_id, manifest_path }) => {
     try {
-      const manifestPath = path.join(getConfig().downloadDir, 'agent-export', 'manifest.json');
+      const manifestPath = manifest_path
+        ? path.resolve(manifest_path)
+        : path.join(getConfig().downloadDir, 'agent-export', 'manifest.json');
       if (!fs.existsSync(manifestPath)) return result({ ok: false, code: 'not_synced', message: 'No agent export exists. Run blackboard_sync first.' });
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { items?: Array<{ id: string }> };
       const item = manifest.items?.find(candidate => candidate.id === item_id);

@@ -27,10 +27,11 @@ export function loadFileTree(filePath: string): FileTree {
     if (fs.existsSync(filePath)) {
       const raw = fs.readFileSync(filePath, 'utf-8');
       const parsed = JSON.parse(raw) as FileTree;
-      if (parsed.version && parsed.courses) {
+      if (parsed.version === FILE_TREE_VERSION && parsed.courses) {
         log.debug(`Loaded file tree from ${filePath} (generated ${parsed.generatedAt})`);
         return parsed;
       }
+      log.debug(`Ignoring file tree at ${filePath} with unsupported schema version ${String(parsed.version)}`);
     }
   } catch (err: any) {
     log.warn(`Could not load file tree from ${filePath}: ${err.message}`);
@@ -125,20 +126,33 @@ function createEmptyTree(): FileTree {
  * Only the first two directory levels are treated as course/section;
  * everything below that is collapsed into the folder path key.
  */
+/**
+ * Directory names that are Blackbox bookkeeping, not downloaded courses.
+ * Ingesting them as courses fabricates bogus tree entries (e.g. every
+ * agent-export markdown file appearing as a course).
+ */
+const NON_COURSE_DIRECTORIES = new Set(['agent-export', 'logs']);
+
+function isCourseDirectory(name: string): boolean {
+  return !name.startsWith('.') && !NON_COURSE_DIRECTORIES.has(name);
+}
+
 export function buildFileTreeFromDisk(downloadDir: string): FileTree {
   const tree = createEmptyTree();
 
   if (!fs.existsSync(downloadDir)) return tree;
 
-  const courseNames = readdirSafe(downloadDir).filter(name =>
-    fs.statSync(path.join(downloadDir, name)).isDirectory()
-  );
+  const courseNames = readdirSafe(downloadDir).filter(name => {
+    if (!isCourseDirectory(name)) return false;
+    return safeStatIsDirectory(path.join(downloadDir, name));
+  });
 
   for (const courseName of courseNames) {
     const coursePath = path.join(downloadDir, courseName);
-    const sectionNames = readdirSafe(coursePath).filter(name =>
-      fs.statSync(path.join(coursePath, name)).isDirectory()
-    );
+    const sectionNames = readdirSafe(coursePath).filter(name => {
+      if (name.startsWith('.')) return false;
+      return safeStatIsDirectory(path.join(coursePath, name));
+    });
 
     for (const sectionName of sectionNames) {
       const sectionPath = path.join(coursePath, sectionName);
@@ -161,8 +175,9 @@ function scanFolderRecursive(
 
   for (const entry of entries) {
     const fullPath = path.join(currentPath, entry);
-    const stat = fs.statSync(fullPath);
+    const stat = safeStat(fullPath);
 
+    if (stat === null) continue;
     if (stat.isDirectory()) {
       scanFolderRecursive(tree, courseName, sectionName, baseSectionPath, fullPath);
     } else if (stat.isFile() && !entry.startsWith('.')) {
@@ -176,6 +191,23 @@ function scanFolderRecursive(
       });
     }
   }
+}
+
+/**
+ * stat() that survives dangling symlinks, permission errors, and files that
+ * disappear mid-scan. A single unreadable entry must not abort the migration.
+ */
+function safeStat(fullPath: string): fs.Stats | null {
+  try {
+    return fs.statSync(fullPath);
+  } catch {
+    return null;
+  }
+}
+
+function safeStatIsDirectory(fullPath: string): boolean {
+  const stat = safeStat(fullPath);
+  return stat !== null && stat.isDirectory();
 }
 
 function readdirSafe(dir: string): string[] {

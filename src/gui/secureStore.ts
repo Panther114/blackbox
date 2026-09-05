@@ -60,6 +60,25 @@ function copyIfMissing(source: string | null, target: string): void {
   }
 }
 
+/**
+ * Write a file via temp-file + rename so a crash mid-write never leaves a
+ * truncated settings or credentials file behind.
+ */
+function atomicWriteFileSync(target: string, data: string | Buffer): void {
+  const temp = `${target}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    fs.writeFileSync(temp, data);
+    fs.renameSync(temp, target);
+  } catch (error) {
+    try {
+      fs.rmSync(temp, { force: true });
+    } catch {
+      // The temp file is disposable.
+    }
+    throw error;
+  }
+}
+
 function copyDirectoryIfMissing(source: string | null, target: string): void {
   if (!source || !fs.existsSync(source)) return;
   if (fs.existsSync(target)) {
@@ -103,10 +122,28 @@ export class SecureDesktopStore {
 
   constructor(private readonly paths: AppPaths) {}
 
+  private migrationMarkerPath(): string {
+    return path.join(this.paths.root, 'migration-v1.json');
+  }
+
   loadSettings(): DesktopSettings {
     try {
       const parsed = JSON.parse(fs.readFileSync(this.paths.configFile, 'utf8')) as Partial<DesktopSettings>;
-      return { ...defaults, ...parsed, blockedCourses: normalizeBlockedCourses(parsed.blockedCourses) };
+      // Coerce every field individually: a hand-edited or partially corrupt
+      // settings.json (e.g. "downloadDir": null) must not poison the runtime
+      // environment with values like DOWNLOAD_DIR="null".
+      return {
+        username: typeof parsed.username === 'string' ? parsed.username : defaults.username,
+        downloadDir: typeof parsed.downloadDir === 'string' && parsed.downloadDir.trim() !== ''
+          ? parsed.downloadDir
+          : defaults.downloadDir,
+        headless: typeof parsed.headless === 'boolean' ? parsed.headless : defaults.headless,
+        courseFilter: typeof parsed.courseFilter === 'string' ? parsed.courseFilter : defaults.courseFilter,
+        autoCheckUpdates: typeof parsed.autoCheckUpdates === 'boolean'
+          ? parsed.autoCheckUpdates
+          : defaults.autoCheckUpdates,
+        blockedCourses: normalizeBlockedCourses(parsed.blockedCourses),
+      };
     } catch {
       return { ...defaults };
     }
@@ -123,7 +160,7 @@ export class SecureDesktopStore {
           : normalizeBlockedCourses(settings.blockedCourses),
     };
     fs.mkdirSync(path.dirname(this.paths.configFile), { recursive: true });
-    fs.writeFileSync(this.paths.configFile, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+    atomicWriteFileSync(this.paths.configFile, `${JSON.stringify(next, null, 2)}\n`);
     return next;
   }
 
@@ -164,7 +201,9 @@ export class SecureDesktopStore {
     if (!safeStorage.isEncryptionAvailable()) throw new Error(this.secureStorageUnavailableMessage());
     const storage = safeStorage as typeof safeStorage & { encryptStringAsync?: (value: string) => Promise<Buffer> };
     const encrypted = storage.encryptStringAsync ? await storage.encryptStringAsync(password) : safeStorage.encryptString(password);
-    fs.writeFileSync(this.paths.credentialsFile, encrypted);
+    // Write to a temp file and rename: a crash mid-write must not leave a
+    // half-written credentials file behind.
+    atomicWriteFileSync(this.paths.credentialsFile, encrypted);
     this.passwordReadable = true;
     this.passwordReadError = '';
   }
@@ -195,7 +234,10 @@ export class SecureDesktopStore {
   }
 
   async migrateLegacySettings(): Promise<LegacyMigrationResult> {
-    if (fs.existsSync(this.paths.configFile)) return { migrated: false };
+    // Key completion on the marker, not on settings.json existing: a crash
+    // after settings.json is written but before credentials are copied must
+    // be recoverable on the next startup.
+    if (fs.existsSync(this.migrationMarkerPath())) return { migrated: false };
     const roots = legacyRoots();
     const legacySettings = firstExistingFile(roots, 'settings.json');
     const legacyEnv = firstExistingFile(roots, '.env');
@@ -207,6 +249,14 @@ export class SecureDesktopStore {
 
     if (!legacySettings && !legacyEnv && !legacyCredentials && !legacyDatabase && !legacyFileTree && !legacyExport && !legacyBrowserProfile) {
       return { migrated: false };
+    }
+
+    // Copy credential material first so a later crash can never leave
+    // settings migrated while the password is lost. Every step is idempotent.
+    copyIfMissing(legacyCredentials, this.paths.credentialsFile);
+    if (!fs.existsSync(this.paths.credentialsFile) && legacyEnv) {
+      const env = readEnvFile(legacyEnv);
+      if (env.BB_PASSWORD) await this.setPassword(env.BB_PASSWORD);
     }
 
     if (legacySettings) {
@@ -234,19 +284,13 @@ export class SecureDesktopStore {
         courseFilter: env.COURSE_FILTER || '',
         blockedCourses: [],
       });
-      if (env.BB_PASSWORD && !legacyCredentials) await this.setPassword(env.BB_PASSWORD);
     }
 
-    copyIfMissing(legacyCredentials, this.paths.credentialsFile);
     copyIfMissing(legacyDatabase, this.paths.databaseFile);
     copyIfMissing(legacyFileTree, this.paths.fileTreeFile);
     copyDirectoryIfMissing(legacyExport, this.paths.exportsDir);
-    if (legacyEnv && !fs.existsSync(this.paths.credentialsFile)) {
-      const env = readEnvFile(legacyEnv);
-      if (env.BB_PASSWORD) await this.setPassword(env.BB_PASSWORD);
-    }
     // Preserve a non-secret migration marker; legacy data is never deleted.
-    fs.writeFileSync(path.join(this.paths.root, 'migration-v1.json'), JSON.stringify({ migratedAt: new Date().toISOString(), source: legacySettings || legacyEnv || legacyCredentials }) + '\n');
+    atomicWriteFileSync(this.migrationMarkerPath(), JSON.stringify({ migratedAt: new Date().toISOString(), source: legacySettings || legacyEnv || legacyCredentials }) + '\n');
     return { migrated: true, browserProfileSource: legacyBrowserProfile || undefined };
   }
 

@@ -127,8 +127,8 @@ export function extractFilenameFromUrl(url: string): string {
 export function parseContentDisposition(header: string): string | null {
   if (!header) return null;
 
-  // Try filename*= (RFC 5987)
-  const filenameStarMatch = header.match(/filename\*=(?:UTF-8''|utf-8'')(.+)/i);
+  // Try filename*= (RFC 5987) — the value ends at the next ';'.
+  const filenameStarMatch = header.match(/filename\*=(?:UTF-8''|utf-8'')([^;\r\n]+)/i);
   if (filenameStarMatch) {
     try {
       return decodeURIComponent(filenameStarMatch[1]);
@@ -137,8 +137,9 @@ export function parseContentDisposition(header: string): string | null {
     }
   }
 
-  // Try filename= with quotes
-  const filenameQuoteMatch = header.match(/filename="(.+)"/i);
+  // Try filename= with quotes — capture up to the closing quote only, never
+  // greedily across trailing parameters such as `; size=5`.
+  const filenameQuoteMatch = header.match(/filename="([^"\r\n]+)"/i);
   if (filenameQuoteMatch) {
     return filenameQuoteMatch[1];
   }
@@ -206,6 +207,28 @@ export async function dumpPageStructure(
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+/**
+ * Return free disk space in bytes for the filesystem holding `dirPath`, or
+ * null when the platform/runtime cannot answer (the caller must then treat
+ * disk-space handling as unavailable instead of guessing).
+ */
+export function getFreeDiskSpace(dirPath: string): number | null {
+  try {
+    const statfs = (fs as unknown as {
+      statfsSync?: (path: string) => { bavail: number; bsize: number };
+    }).statfsSync;
+    if (!statfs) return null;
+    const stats = statfs(dirPath);
+    if (!stats || typeof stats.bavail !== 'number' || typeof stats.bsize !== 'number') return null;
+    return stats.bavail * stats.bsize;
+  } catch {
+    return null;
+  }
+}
+
+/** Warn below this much free space before starting a batch download. */
+export const LOW_DISK_SPACE_BYTES = 250 * 1024 * 1024;
 
 /**
  * Format bytes to human readable size

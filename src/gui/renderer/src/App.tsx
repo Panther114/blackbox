@@ -10,8 +10,47 @@ import {
 } from './demoData';
 
 type DownloadStage = 'ready' | 'courses' | 'files' | 'download' | 'summary';
-type View = 'download' | 'agent' | 'settings';
+type View = 'download' | 'automation' | 'agent' | 'settings';
 type SettingsSection = 'credentials' | 'courses' | 'diagnostics' | 'updates';
+type AutomationTab = 'downloads' | 'settings';
+type AutomationGnumberStatus = 'pending' | 'logging-in' | 'discovering' | 'downloading' | 'done' | 'failed';
+type AutomationSettingsState = {
+  gnumbers: string[];
+  downloadDir: string;
+  maxFileSizeMB: number;
+  excludedExtensionsCsv: string;
+};
+type AutomationGnumberRun = {
+  gnumber: string;
+  status: AutomationGnumberStatus;
+  error?: string;
+  courses: string[];
+  claimedCourses: string[];
+  skippedCourses: string[];
+  filesDownloaded: number;
+  filesFailed: number;
+  filesSkipped: number;
+  instructionsDownloaded: number;
+};
+type AutomationRunView = {
+  running: boolean;
+  total: number;
+  parallelSessions: number;
+  entries: Record<string, AutomationGnumberRun>;
+  failedLogins: Array<{ gnumber: string; error: string; at: string }>;
+  uniqueCourses: number;
+  filesDownloaded: number;
+  filesFailed: number;
+  filesSkipped: number;
+  instructionsDownloaded: number;
+  summary?: {
+    succeeded: number;
+    runlogPath: string;
+    xlsxPath: string;
+    debugPath: string;
+  };
+  error?: string;
+};
 type Course = { id: string; name: string; url: string; path: string };
 type BlockedCourse = { id: string; name: string };
 type DiscoveredFile = {
@@ -31,6 +70,7 @@ type Summary = {
   filesSelected: number;
   filesDownloaded: number;
   filesSkipped: number;
+  filesRejected?: number;
   filesFailed: number;
   failedFiles: Array<{ name: string; reason: string }>;
   instructionCoursesSelected: number;
@@ -160,6 +200,112 @@ const eta = (seconds: number): string => {
 
 const clampPercent = (value: number): number => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+function parseGnumberList(input: string): { valid: string[]; invalid: string[] } {
+  const seen = new Set<string>();
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  for (const raw of input.split(/[\r\n,;]+/)) {
+    const token = raw.trim();
+    if (!token) continue;
+    const digits = token.replace(/^G/i, '').replace(/[^\d]/g, '');
+    if (!/^\d{6,10}$/.test(digits)) { invalid.push(token); continue; }
+    const normalized = 'g' + digits;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    valid.push(normalized);
+  }
+  return { valid, invalid };
+}
+
+function applyAutomationEvent(
+  previous: AutomationRunView | null,
+  type: string,
+  payload: Record<string, unknown>,
+): AutomationRunView | null {
+  if (!previous) {
+    if (type === 'automation:start') {
+      return {
+        running: true,
+        total: Number(payload.total || 0),
+        parallelSessions: Number(payload.parallelSessions || 1),
+        entries: {},
+        failedLogins: [],
+        uniqueCourses: 0,
+        filesDownloaded: 0,
+        filesFailed: 0,
+        filesSkipped: 0,
+        instructionsDownloaded: 0,
+      };
+    }
+    return previous;
+  }
+
+  const next: AutomationRunView = { ...previous, entries: { ...previous.entries } };
+  const ensureEntry = (gnumber: string): AutomationGnumberRun => {
+    const existing = next.entries[gnumber];
+    if (existing) return existing;
+    const created: AutomationGnumberRun = {
+      gnumber,
+      status: 'pending',
+      courses: [],
+      claimedCourses: [],
+      skippedCourses: [],
+      filesDownloaded: 0,
+      filesFailed: 0,
+      filesSkipped: 0,
+      instructionsDownloaded: 0,
+    };
+    next.entries[gnumber] = created;
+    return created;
+  };
+  const patch = (gnumber: string, mutate: (entry: AutomationGnumberRun) => void): void => {
+    const entry = ensureEntry(gnumber);
+    const copy = { ...entry };
+    mutate(copy);
+    next.entries[gnumber] = copy;
+  };
+
+  switch (type) {
+    case 'automation:gnumber:start':
+      patch(String(payload.gnumber), entry => { entry.status = 'logging-in'; entry.error = undefined; });
+      break;
+    case 'automation:gnumber:status': {
+      const status = String(payload.status) as AutomationGnumberStatus;
+      patch(String(payload.gnumber), entry => { entry.status = status; entry.error = payload.error ? String(payload.error) : undefined; });
+      break;
+    }
+    case 'automation:gnumber:courses':
+      patch(String(payload.gnumber), entry => { entry.courses = Array.isArray(payload.courses) ? payload.courses.map(String) : []; });
+      break;
+    case 'automation:course:claimed':
+      patch(String(payload.gnumber), entry => { entry.claimedCourses = [...entry.claimedCourses, String(payload.course)]; });
+      next.uniqueCourses += 1;
+      break;
+    case 'automation:course:skipped':
+      patch(String(payload.gnumber), entry => { entry.skippedCourses = [...entry.skippedCourses, String(payload.course)]; });
+      break;
+    case 'automation:file:done':
+      patch(String(payload.gnumber), entry => { entry.filesDownloaded += 1; });
+      next.filesDownloaded += 1;
+      break;
+    case 'automation:file:progress':
+      break;
+    case 'automation:course:done':
+      break;
+    case 'automation:gnumber:done': {
+      const status = String(payload.status) as AutomationGnumberStatus;
+      patch(String(payload.gnumber), entry => { entry.status = status; entry.error = payload.error ? String(payload.error) : undefined; });
+      break;
+    }
+    case 'automation:done':
+      next.running = false;
+      break;
+    default:
+      break;
+  }
+  return next;
+}
 const demoInstructionCount = (courseCount: number): number => courseCount > 0 ? Math.max(courseCount, Math.round((courseCount * 42) / 9)) : 0;
 const WIZARD_STEPS = ['Courses', 'Files', 'Download', 'Summary'] as const;
 const wizardStepIndex = (stage: DownloadStage): number => stage === 'courses' ? 0 : stage === 'files' ? 1 : stage === 'download' ? 2 : stage === 'summary' ? 3 : -1;
@@ -218,6 +364,18 @@ export function App() {
   const [agentInfo, setAgentInfo] = useState<Record<string, unknown> | null>(null);
   const [agentOutput, setAgentOutput] = useState<Record<string, unknown> | null>(null);
   const [updateState, setUpdateState] = useState<Record<string, unknown>>({ status: 'idle' });
+  const [automationTab, setAutomationTab] = useState<AutomationTab>('settings');
+  const [automationSettings, setAutomationSettings] = useState<AutomationSettingsState>({
+    gnumbers: [],
+    downloadDir: '',
+    maxFileSizeMB: 100,
+    excludedExtensionsCsv: '.mp3, .mp4',
+  });
+  const [automationNormalDir, setAutomationNormalDir] = useState('');
+  const [automationGnumberModal, setAutomationGnumberModal] = useState(false);
+  const [automationGnumberDraft, setAutomationGnumberDraft] = useState('');
+  const [automationRun, setAutomationRun] = useState<AutomationRunView | null>(null);
+  const [isAutomationRunning, setIsAutomationRunning] = useState(false);
 
   const selectedRunUrlSetRef = useRef<Set<string>>(new Set());
   const selectedRunKnownByUrlRef = useRef<Map<string, number>>(new Map());
@@ -225,7 +383,7 @@ export function App() {
   useEffect(() => {
     if (DEMO_MODE) {
       const demoDownloadDir = 'C:\\Users\\demo\\Downloads\\Blackbox';
-      setVersion('1.0.2');
+      setVersion('1.1.0');
       setConfig(previous => ({ ...previous, username: 'g12345678', password: 'blackboard-demo-password', downloadDir: demoDownloadDir, headless: true, autoCheckUpdates: true }));
       setSavedPassword('blackboard-demo-password');
       setPasswordStored(true);
@@ -293,6 +451,17 @@ export function App() {
         setConfig(previous => ({ ...previous, blockedCourses: loadedBlockedCourses }));
         setPaths(await window.blackboxGui.getPaths());
         setUpdateState(await window.blackboxGui.getUpdateState());
+        try {
+          const automation = (await window.blackboxGui.loadAutomationSettings()) as { settings: Record<string, unknown>; normalDownloadDir: string };
+          const stored = automation.settings as Record<string, unknown>;
+          setAutomationSettings({
+            gnumbers: Array.isArray(stored.gnumbers) ? (stored.gnumbers as string[]).map(String) : [],
+            downloadDir: String(stored.downloadDir || ''),
+            maxFileSizeMB: Math.max(1, Math.round(Number(stored.maxFileSizeBytes || 0) / (1024 * 1024)) || 100),
+            excludedExtensionsCsv: Array.isArray(stored.excludedExtensions) ? (stored.excludedExtensions as string[]).map(String).join(', ') : '.mp3, .mp4',
+          });
+          setAutomationNormalDir(String(automation.normalDownloadDir || ''));
+        } catch { /* the automation panel surfaces validation errors on save */ }
       } catch (error) { setErrorMessage(toGuiErrorMessage(error)); }
     })();
   }, []);
@@ -338,7 +507,7 @@ export function App() {
           });
         }
       }
-      if (evt.type === 'download:complete' || evt.type === 'download:error' || evt.type === 'download:skip') {
+      if (evt.type === 'download:complete' || evt.type === 'download:error' || evt.type === 'download:skip' || evt.type === 'download:rejected') {
         const url = String(payload.url || '');
         if (!url || selectedRunUrlSetRef.current.has(url)) {
           const key: 'completed' | 'failed' | 'skipped' = evt.type === 'download:complete' ? 'completed' : evt.type === 'download:error' ? 'failed' : 'skipped';
@@ -348,6 +517,7 @@ export function App() {
       if (evt.type === 'diagnostics:progress') setDiagnosticsProgress({ running: Boolean(payload.running), completed: Number(payload.completed || 0), total: Number(payload.total || 0), current: String(payload.current || ''), loginTest: Boolean(payload.loginTest) });
       if (evt.type === 'summary:ready') setSummary(evt.payload as Summary);
       if (evt.type === 'update:state') setUpdateState(evt.payload as Record<string, unknown>);
+      if (evt.type.startsWith('automation:')) setAutomationRun(previous => applyAutomationEvent(previous, evt.type, payload));
     });
     return () => unsub();
   }, [selectedCourseIds.size]);
@@ -523,8 +693,16 @@ export function App() {
     if (DEMO_MODE) { await runDemoPreparation(); return; }
     setIsPreparingDownload(true); setStage('ready'); setPreparationProgress({ completed: 0, total: 3, label: 'Connecting to Blackboard' });
     await runWithUiError(async () => {
+      // Never send the stored-password mask as a real password; when the mask
+      // is shown the worker must fall back to the stored credentials.
+      const useStoredPassword = passwordStored && config.password === SAVED_PASSWORD_MASK;
+      const hasPassword = useStoredPassword || Boolean(config.password.trim());
+      if (!config.username.trim() || !hasPassword) {
+        setIsPreparingDownload(false); setPreparationProgress(null);
+        throw new Error('Save your Blackboard username and password in Credentials before starting a download.');
+      }
       setStatus('Connecting to Blackboard and loading your course list...');
-      await window.blackboxGui.workflowStart({ username: config.username || undefined, password: config.password || undefined, downloadDir: config.downloadDir, headless: config.headless });
+      await window.blackboxGui.workflowStart({ username: config.username || undefined, password: useStoredPassword ? undefined : config.password || undefined, downloadDir: config.downloadDir, headless: config.headless });
       setPreparationProgress({ completed: 1, total: 3, label: 'Loading your course list' });
       const discovered = await window.blackboxGui.discoverCourses();
       setCourses(discovered); setSelectedCourseIds(new Set(discovered.map(course => course.id))); setSelectedInstructionCourseIds(new Set(discovered.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus('');
@@ -639,7 +817,17 @@ export function App() {
       const keepStoredPassword = passwordStored && config.password === SAVED_PASSWORD_MASK;
       const passwordToSend = keepStoredPassword ? undefined : config.password;
       const passwordToDisplay = keepStoredPassword ? (savedPassword || SAVED_PASSWORD_MASK) : config.password;
-      setStatus(testLogin ? 'Saving settings and testing login...' : 'Saving settings...'); if (DEMO_MODE || !window.blackboxGui) await delay(350); else await window.blackboxGui.saveSetup({ ...config, password: passwordToSend, testLogin }); setSavedPassword(keepStoredPassword ? savedPassword : passwordToDisplay); setPasswordStored(Boolean(passwordToDisplay)); setPasswordReadable(Boolean(keepStoredPassword ? passwordReadable : passwordToDisplay)); setPasswordError(''); setConfig(previous => ({ ...previous, password: passwordToDisplay })); setHasCredentials(Boolean(config.username.trim()) && Boolean(keepStoredPassword ? passwordReadable : passwordToDisplay)); setStatus(testLogin ? 'Settings saved. Login test requested.' : 'Settings saved.');
+      setStatus(testLogin ? 'Saving settings and testing login...' : 'Saving settings...');
+      if (DEMO_MODE || !window.blackboxGui) {
+        await delay(350);
+      } else {
+        const result = await window.blackboxGui.saveSetup({ ...config, password: passwordToSend, testLogin }) as { ok?: boolean; loginTestPassed?: boolean; loginTestError?: string };
+        if (testLogin && result.loginTestPassed === false) {
+          // The save itself succeeded; surface only the failed login test.
+          setErrorMessage('Settings were saved, but the login test failed: ' + (result.loginTestError || 'unknown error'));
+        }
+      }
+      setSavedPassword(keepStoredPassword ? savedPassword : passwordToDisplay); setPasswordStored(Boolean(passwordToDisplay)); setPasswordReadable(Boolean(keepStoredPassword ? passwordReadable : passwordToDisplay)); setPasswordError(''); setConfig(previous => ({ ...previous, password: passwordToDisplay })); setHasCredentials(Boolean(config.username.trim()) && Boolean(keepStoredPassword ? passwordReadable : passwordToDisplay)); setStatus(testLogin ? 'Settings saved. Login test requested.' : 'Settings saved.');
     });
   }
 
@@ -647,6 +835,107 @@ export function App() {
     await runWithUiError(async () => {
       if (DEMO_MODE || !window.blackboxGui) await delay(250); else await window.blackboxGui.resetSetup(); setHasCredentials(false); setSavedPassword(''); setPasswordStored(false); setPasswordReadable(false); setPasswordError(''); setConfig(previous => ({ ...previous, username: '', password: '' })); setShowPassword(false); setStatus('Credentials reset.');
     });
+  }
+
+  function automationPayload() {
+    return {
+      gnumbers: automationSettings.gnumbers,
+      downloadDir: automationSettings.downloadDir,
+      maxFileSizeBytes: Math.max(1, Math.round(automationSettings.maxFileSizeMB * 1024 * 1024)),
+      excludedExtensions: automationSettings.excludedExtensionsCsv
+        .split(/[,\s]+/)
+        .map(ext => ext.trim().toLowerCase())
+        .filter(Boolean)
+        .map(ext => (ext.startsWith('.') ? ext : '.' + ext)),
+    };
+  }
+
+  async function saveAutomationSettings(testOnly = false) {
+    await runWithUiError(async () => {
+      if (DEMO_MODE || !window.blackboxGui) { setStatus('Automation settings saved (offline demo).'); return; }
+      const result = await window.blackboxGui.saveAutomationSettings(automationPayload());
+      const stored = result.settings as Record<string, unknown>;
+      setAutomationSettings(previous => ({
+        ...previous,
+        gnumbers: Array.isArray(stored.gnumbers) ? (stored.gnumbers as string[]).map(String) : previous.gnumbers,
+        downloadDir: String(stored.downloadDir || previous.downloadDir),
+      }));
+      setStatus('Automation settings saved.');
+      if (testOnly) setStatus('Automation settings saved.');
+    });
+  }
+
+  async function chooseAutomationDirectory() {
+    if (DEMO_MODE || !window.blackboxGui) { setStatus('Offline demo: automation folders are represented only.'); return; }
+    await runWithUiError(async () => {
+      const selected = await window.blackboxGui.chooseAutomationDirectory();
+      if (selected) { setAutomationSettings(previous => ({ ...previous, downloadDir: selected })); setStatus('Automation folder selected. Save settings to keep it.'); }
+    });
+  }
+
+  function openAutomationGnumberModal() {
+    setAutomationGnumberDraft(automationSettings.gnumbers.join('\n'));
+    setAutomationGnumberModal(true);
+  }
+
+  function applyAutomationGnumberDraft() {
+    const parsed = parseGnumberList(automationGnumberDraft);
+    setAutomationSettings(previous => ({ ...previous, gnumbers: parsed.valid }));
+    setAutomationGnumberModal(false);
+    setStatus(`Automation G-numbers set: ${parsed.valid.length} valid${parsed.invalid.length > 0 ? `, ${parsed.invalid.length} lines ignored` : ''}.`);
+  }
+
+  const parsedGnumberPreview = parseGnumberList(automationGnumberDraft);
+
+  async function startAutomationRun() {
+    if (DEMO_MODE || !window.blackboxGui) { setStatus('Offline demo: automatic downloading is not simulated.'); return; }
+    await runWithUiError(async () => {
+      await window.blackboxGui.saveAutomationSettings(automationPayload());
+      setAutomationTab('downloads');
+      setIsAutomationRunning(true);
+      setAutomationRun({
+        running: true,
+        total: automationSettings.gnumbers.length,
+        parallelSessions: Math.min(4, automationSettings.gnumbers.length) || 1,
+        entries: Object.fromEntries(automationSettings.gnumbers.map(gnumber => [gnumber, {
+          gnumber,
+          status: 'pending' as AutomationGnumberStatus,
+          courses: [],
+          claimedCourses: [],
+          skippedCourses: [],
+          filesDownloaded: 0,
+          filesFailed: 0,
+          filesSkipped: 0,
+          instructionsDownloaded: 0,
+        }])),
+        failedLogins: [],
+        uniqueCourses: 0,
+        filesDownloaded: 0,
+        filesFailed: 0,
+        filesSkipped: 0,
+        instructionsDownloaded: 0,
+      });
+      setStatus('Automatic downloading started. The run log is written live into the automation folder.');
+      const summary = (await window.blackboxGui.startAutomationRun()) as { succeeded?: number; runlogPath?: string; xlsxPath?: string; debugPath?: string };
+      setAutomationRun(previous => previous ? {
+        ...previous,
+        running: false,
+        summary: {
+          succeeded: Number(summary.succeeded || 0),
+          runlogPath: String(summary.runlogPath || ''),
+          xlsxPath: String(summary.xlsxPath || ''),
+          debugPath: String(summary.debugPath || ''),
+        },
+      } : previous);
+      setStatus('Automatic downloading finished.');
+    });
+    setIsAutomationRunning(false);
+  }
+
+  async function openAutomationDirectory() {
+    if (DEMO_MODE || !window.blackboxGui) { setStatus('Offline demo: folders are represented only.'); return; }
+    const error = await window.blackboxGui.openAutomationDirectory();
+    if (error) setErrorMessage(error);
   }
 
   async function runDemoDoctor(loginTest: boolean) {
@@ -699,16 +988,24 @@ export function App() {
 
   async function downloadAppUpdate() { await runWithUiError(async () => { if (DEMO_MODE || !window.blackboxGui) return; setUpdateState(await window.blackboxGui.downloadUpdate()); }); }
 
+  async function installAppUpdate() {
+    await runWithUiError(async () => {
+      if (DEMO_MODE || !window.blackboxGui) return;
+      await window.blackboxGui.installUpdate();
+    });
+  }
+
   const fileTypes = Array.from(new Set(files.map(file => (file.fileType || '').toLowerCase()).filter(Boolean)));
   const navItems: Array<{ id: View; label: string; hint: string; icon: React.ReactNode }> = [
     { id: 'download', label: 'Downloads', hint: 'Courses, files and saving', icon: <Icon name="download" size={21} /> },
-    { id: 'agent', label: 'Agent Export', hint: 'Read-only tools and harnesses', icon: <Icon name="agent" size={21} /> },
+    { id: 'automation', label: 'Automation', hint: 'Batch G-number downloading', icon: <Icon name="scan" size={21} /> },
+    { id: 'agent', label: 'Agent Skills', hint: 'Read-only tools and harnesses', icon: <Icon name="agent" size={21} /> },
     { id: 'settings', label: 'Settings', hint: 'Credentials, diagnostics and updates', icon: <Icon name="sliders" size={21} /> },
   ];
 
-  function onNav(id: View) { setErrorMessage(''); setActiveView(id); if (id === 'agent') void loadAgentStatus(); }
+  function onNav(id: View) { setErrorMessage(''); setActiveView(id); if (id === 'agent') void loadAgentStatus(); if (id === 'automation') setAutomationTab(previous => previous); }
   const activeLabel = navItems.find(item => item.id === activeView)?.label || 'Downloads';
-  const activeIcon: IconName = activeView === 'download' ? 'download' : activeView === 'agent' ? 'agent' : 'sliders';
+  const activeIcon: IconName = activeView === 'download' ? 'download' : activeView === 'automation' ? 'scan' : activeView === 'agent' ? 'agent' : 'sliders';
   const harnessInstalled = harnessSkillInstalled(agentInfo);
   const skillPath = harnessSkillPath(agentInfo);
   const showGlobalStatus = Boolean(status) && !(activeView === 'download' && (isPreparingDownload || isScanningCourses || stage === 'download'));
@@ -764,10 +1061,112 @@ export function App() {
 
           {settingsSection === 'diagnostics' && <div className="panel settings-panel" data-testid="diagnostics-panel"><div className="surface-intro"><div><h2>Environment checks</h2><p>If Blackboard is not working, run a check here to pinpoint what is failing.</p></div><span className={`state-badge ${doctorRows.length ? 'state-good' : 'state-neutral'}`}>{doctorRows.length ? `${doctorRows.length} results` : 'Not run'}</span></div><div className="btn-row"><button className="btn-primary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(false)}><Icon name="scan" size={17} /> Run checks</button><button className="btn-secondary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(true)}><Icon name="shield" size={17} /> Run and login test</button></div>{doctorRows.length > 0 ? <ul className="checks">{doctorRows.map((row, index) => <li key={`${row.message}-${index}`} className={`check check-${row.status}`}><span className="check-dot"><Icon name={row.status === 'pass' ? 'check' : row.status === 'warn' ? 'warning' : 'x'} size={13} /></span><span className="check-msg">{row.message}</span>{row.required === false && <span className="check-optional">optional</span>}</li>)}</ul> : <p className="empty-inline">No checks run yet.</p>}</div>}
 
-          {settingsSection === 'updates' && <div className="panel settings-panel" data-testid="updates-panel"><div className="surface-intro"><div><h2>Application updates</h2><p>Keep the desktop app current without interrupting a download.</p></div><span className="state-badge state-neutral">v{version || '...'}</span></div><div className="update-summary"><div><span>Status</span><strong>{String(updateState.status || 'idle')}</strong></div>{updateState.version != null && <div><span>Available</span><strong>{String(updateState.version)}</strong></div>}</div>{updateState.message != null && <p className="inline-message">{String(updateState.message)}</p>}{updateState.status === 'downloading' && <ProgressBar label="Downloading update" value={Number(updateState.percent || 0)} detail={`${Number(updateState.percent || 0).toFixed(0)}%`} />}<label className="toggle-row"><input type="checkbox" checked={config.autoCheckUpdates} onChange={event => setConfig(previous => ({ ...previous, autoCheckUpdates: event.target.checked }))} /><span><strong>Check automatically</strong><small>Look for updates when the app starts.</small></span></label><div className="btn-row"><button className="btn-primary" disabled={updateState.status === 'checking' || updateState.status === 'downloading'} onClick={checkUpdates}><Icon name="refresh" size={17} /> Check now</button><button className="btn-secondary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save preferences</button>{updateState.status === 'available' && <button className="btn-secondary" onClick={downloadAppUpdate}><Icon name="download" size={17} /> Download update</button>}{updateState.status === 'ready' && <button className="btn-secondary" onClick={() => window.blackboxGui.installUpdate()}><Icon name="updates" size={17} /> Restart and install</button>}</div></div>}
+          {settingsSection === 'updates' && <div className="panel settings-panel" data-testid="updates-panel"><div className="surface-intro"><div><h2>Application updates</h2><p>Keep the desktop app current without interrupting a download.</p></div><span className="state-badge state-neutral">v{version || '...'}</span></div><div className="update-summary"><div><span>Status</span><strong>{String(updateState.status || 'idle')}</strong></div>{updateState.version != null && <div><span>Available</span><strong>{String(updateState.version)}</strong></div>}</div>{updateState.message != null && <p className="inline-message">{String(updateState.message)}</p>}{updateState.status === 'downloading' && <ProgressBar label="Downloading update" value={Number(updateState.percent || 0)} detail={`${Number(updateState.percent || 0).toFixed(0)}%`} />}<label className="toggle-row"><input type="checkbox" checked={config.autoCheckUpdates} onChange={event => setConfig(previous => ({ ...previous, autoCheckUpdates: event.target.checked }))} /><span><strong>Check automatically</strong><small>Look for updates when the app starts.</small></span></label><div className="btn-row"><button className="btn-primary" disabled={updateState.status === 'checking' || updateState.status === 'downloading'} onClick={checkUpdates}><Icon name="refresh" size={17} /> Check now</button><button className="btn-secondary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save preferences</button>{updateState.status === 'available' && <button className="btn-secondary" onClick={downloadAppUpdate}><Icon name="download" size={17} /> Download update</button>}{updateState.status === 'ready' && <button className="btn-secondary" onClick={installAppUpdate}><Icon name="updates" size={17} /> Restart and install</button>}</div></div>}
         </section>}
 
 {activeView === 'agent' && <section className="view" data-testid="agent-panel"><div className="panel agent-panel"><div className="surface-intro"><div><h2>Read-only course context</h2><p>Export instructions, assignments, announcements, and attachments for coding agents. The export never submits work or changes Blackboard.</p></div><span className={`state-badge ${agentInfo?.configured ? 'state-good' : 'state-warn'}`}>{agentInfo?.configured ? 'Configured' : 'Setup needed'}</span></div><div className="agent-summary"><div><span>Workflow</span><strong>{agentInfo?.busy ? 'Busy' : 'Idle'}</strong></div><div><span>Export folder</span><strong className="mono">{String(agentInfo?.downloadDir || paths.downloads || config.downloadDir)}</strong></div></div><div className="agent-actions"><button className="btn-primary" onClick={syncAgent} disabled={Boolean(agentInfo?.busy) || !agentInfo?.configured}><Icon name="cloud-download" size={17} /> Build export</button><button className="btn-secondary" onClick={loadAgentStatus}><Icon name="refresh" size={17} /> Refresh status</button></div><div className="integration-row"><div><strong>Harness skill</strong><p>Install the managed skill in <code>~/.agents/skills</code>. Compatible harnesses will discover it automatically.</p>{skillPath && <span className="mono">{skillPath}</span>}</div><div className="integration-actions"><span className={`state-badge ${harnessInstalled ? 'state-good' : 'state-neutral'}`}>{harnessInstalled ? 'Installed' : 'Not installed'}</span>{harnessInstalled ? <button className="btn-danger" onClick={removeHarness}><Icon name="x" size={16} /> Remove from harnesses</button> : <button className="btn-secondary" onClick={installHarness}><Icon name="check" size={16} /> Install for harnesses</button>}</div></div>{agentOutput && <div className="code-block"><pre>{JSON.stringify(agentOutput, null, 2)}</pre></div>}<p className="field-help">MCP command: <code>Blackbox.exe --mcp</code> when using the packaged app.</p></div></section>}
+
+{activeView === 'automation' && <section className="view" data-testid="automation-panel">
+  <nav className="settings-tabs" aria-label="Automation sections">
+    <button className={automationTab === 'downloads' ? 'is-active' : ''} onClick={() => setAutomationTab('downloads')}>Downloads</button>
+    <button className={automationTab === 'settings' ? 'is-active' : ''} onClick={() => setAutomationTab('settings')}>Settings</button>
+  </nav>
+
+  {automationTab === 'settings' && (
+    <div className="panel settings-panel" data-testid="automation-settings-panel">
+      <div className="surface-intro"><div><h2>Automation settings</h2><p>Fully independent from your normal Blackbox settings: own G-numbers, own download directory, own limits.</p></div><span className={'state-badge ' + (automationSettings.gnumbers.length ? 'state-good' : 'state-warn')}>{automationSettings.gnumbers.length ? automationSettings.gnumbers.length + ' G-numbers' : 'No G-numbers'}</span></div>
+      <div className="form-grid">
+        <div className="field field-wide"><span className="field-label"><Icon name="key" size={14} /> G-numbers</span>
+          <div className="btn-row">
+            <button className="btn-secondary" onClick={openAutomationGnumberModal} data-testid="automation-paste-gnumbers"><Icon name="file" size={15} /> Paste G-number list</button>
+            <span className="field-help">{automationSettings.gnumbers.length > 0 ? `${automationSettings.gnumbers.length} saved. Each number logs in with itself as the password.` : 'Paste one G-number per line.'}</span>
+          </div>
+        </div>
+        <div className="field field-wide"><span className="field-label"><Icon name="folder" size={14} /> Automation download directory</span>
+          <div className="path-editor"><input data-testid="automation-directory-input" value={automationSettings.downloadDir} onChange={event => setAutomationSettings(previous => ({ ...previous, downloadDir: event.target.value }))} placeholder="D:\\Blackbox-Automation" /><div className="directory-actions"><button className="btn-secondary" onClick={chooseAutomationDirectory}><Icon name="folder" size={16} /> Choose folder</button><button className="btn-ghost" onClick={openAutomationDirectory}><Icon name="open" size={16} /> Open directory</button></div></div>
+          <span className="field-help">Must be different from the normal download directory ({automationNormalDir || 'see Settings'}).</span>
+        </div>
+        <label className="field"><span className="field-label"><Icon name="file" size={14} /> Max file size per file (MB)</span>
+          <input type="number" min={1} value={automationSettings.maxFileSizeMB} onChange={event => setAutomationSettings(previous => ({ ...previous, maxFileSizeMB: Math.max(1, Number(event.target.value) || 1) }))} />
+          <span className="field-help">Default 100 MB. Larger files are skipped.</span>
+        </label>
+        <label className="field"><span className="field-label"><Icon name="x-circle" size={14} /> Excluded extensions</span>
+          <input value={automationSettings.excludedExtensionsCsv} onChange={event => setAutomationSettings(previous => ({ ...previous, excludedExtensionsCsv: event.target.value }))} placeholder=".mp3, .mp4" />
+          <span className="field-help">Comma-separated. Files ending in these extensions are never downloaded.</span>
+        </label>
+      </div>
+      <div className="btn-row"><button className="btn-primary" onClick={() => saveAutomationSettings(false)}><Icon name="check" size={17} /> Save automation settings</button></div>
+    </div>
+  )}
+
+  {automationTab === 'downloads' && (
+    <div className="panel settings-panel" data-testid="automation-downloads-panel">
+      <div className="surface-intro"><div><h2>Automatic downloading</h2><p>For every G-number, Blackbox logs in, lists the courses, and downloads everything for each unique course exactly once — in parallel sessions.</p></div><span className={`state-badge ${isAutomationRunning ? 'state-warn' : 'state-neutral'}`}>{isAutomationRunning ? 'Running' : 'Idle'}</span></div>
+      <div className="btn-row">
+        <button className="btn-primary btn-lg" data-testid="automation-start" disabled={isAutomationRunning || automationSettings.gnumbers.length === 0 || !automationSettings.downloadDir} onClick={startAutomationRun}><Icon name="cloud-download" size={17} /> Automatic downloading</button>
+        <button className="btn-ghost" onClick={openAutomationDirectory}><Icon name="folder" size={16} /> Open folder</button>
+        {automationSettings.gnumbers.length === 0 && <span className="field-help">Save G-numbers in Automation settings first.</span>}
+      </div>
+      {automationRun && (
+        <div className="automation-run" data-testid="automation-run">
+          <div className="summary-grid">
+            <div><span>G-numbers</span><strong>{automationRun.total}</strong></div>
+            <div><span>Unique courses</span><strong>{automationRun.uniqueCourses}</strong></div>
+            <div><span>Files downloaded</span><strong className="text-good">{automationRun.filesDownloaded}</strong></div>
+            <div><span>Files failed</span><strong className="text-bad">{automationRun.filesFailed}</strong></div>
+            <div><span>Files skipped</span><strong className="text-warn">{automationRun.filesSkipped}</strong></div>
+            <div><span>Instructions</span><strong>{automationRun.instructionsDownloaded}</strong></div>
+            <div><span>Failed logins</span><strong className="text-bad">{automationRun.failedLogins.length}</strong></div>
+            <div><span>Sessions</span><strong>{automationRun.parallelSessions}</strong></div>
+          </div>
+          <div className="list automation-list">
+            {Object.values(automationRun.entries).map(entry => (
+              <div key={entry.gnumber} className="list-row automation-row" data-testid={`automation-row-${entry.gnumber}`}>
+                <span className="mono">{entry.gnumber}</span>
+                <span className={`state-badge ${entry.status === 'done' ? 'state-good' : entry.status === 'failed' ? 'pill-warn' : entry.status === 'pending' ? 'state-neutral' : 'pill-warn'}`}>{entry.status}</span>
+                <span className="ellipsis" title={entry.claimedCourses.join(', ') || entry.courses.join(', ')}>
+                  {entry.status === 'failed' ? (entry.error || 'Login failed') : `${entry.claimedCourses.length} downloading · ${entry.skippedCourses.length} already covered · ${entry.courses.length} seen`}
+                </span>
+                <span className="mono">{entry.filesDownloaded}/{entry.filesFailed}±{entry.filesSkipped}</span>
+              </div>
+            ))}
+          </div>
+          {automationRun.failedLogins.length > 0 && <ul className="checks">{automationRun.failedLogins.map(failure => <li key={failure.gnumber} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{failure.gnumber}: {failure.error}</span></li>)}</ul>}
+          {automationRun.summary && (
+            <div className="btn-row">
+              <span className="field-help">Run log: {automationRun.summary.runlogPath} · {automationRun.summary.xlsxPath} · {automationRun.summary.debugPath}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )}
+
+  {automationGnumberModal && (
+    <div className="modal-overlay" role="dialog" aria-modal="true" data-testid="automation-gnumber-modal" onClick={() => setAutomationGnumberModal(false)}>
+      <div className="modal-card panel" onClick={event => event.stopPropagation()}>
+        <div className="surface-intro"><div><h2>Paste G-numbers</h2><p>One per line (or comma-separated). Each G-number logs in with itself as the password.</p></div></div>
+        <textarea
+          className="automation-gnumber-input"
+          data-testid="automation-gnumber-textarea"
+          value={automationGnumberDraft}
+          onChange={event => setAutomationGnumberDraft(event.target.value)}
+          rows={10}
+          placeholder={'g12345678\ng87654321'}
+          autoFocus
+        />
+        <span className="field-help">
+          {parsedGnumberPreview.valid.length} valid, {parsedGnumberPreview.invalid.length} invalid{parsedGnumberPreview.invalid.length > 0 ? ` (ignored: ${parsedGnumberPreview.invalid.slice(0, 5).join(', ')}${parsedGnumberPreview.invalid.length > 5 ? '…' : ''})` : ''}
+        </span>
+        <div className="btn-row">
+          <button className="btn-primary" data-testid="automation-gnumber-save" onClick={applyAutomationGnumberDraft}><Icon name="check" size={16} /> Save list</button>
+          <button className="btn-ghost" onClick={() => setAutomationGnumberModal(false)}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )}
+</section>}
+
 
         {activeView === 'download' && (stage === 'courses' || stage === 'files' || stage === 'download' || stage === 'summary') && <section className="view download-view"><div className="download-stepper-row"><Stepper current={wizardStepIndex(stage)} />{stage !== 'download' && <button className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</button>}</div>
           {stage === 'courses' && <div className="panel selection-panel" data-testid="course-list-panel"><div className="selection-head"><div><h2>Choose courses</h2><p>Select the courses to scan for files.</p></div><CountSummary items={[`${visibleCourses.length} shown`, `${selectedCourseIds.size} selected`, `${courses.length} total`]} /></div>{isScanningCourses && discoveryProgress && <ProgressBar label={discoveryProgress.phase === 'metadata' ? 'Reading file details' : 'Scanning course content'} value={discoveryPercent} detail={`${discoveryProgress.completed} / ${discoveryProgress.total}`} subdetail={discoveryProgress.currentSection || discoveryProgress.currentCourse || 'Working through the selected courses'} dataTestId="discovery-progress" />}<div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter courses" value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label><div className="btn-row btn-row-inline"><button className="btn-secondary" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set(courses.map(course => course.id)))}><Icon name="check-square" size={16} /> Select all</button><button className="btn-ghost" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set())}><Icon name="x" size={16} /> Clear</button><button className="btn-primary" disabled={selectedCourses.length === 0 || isScanningCourses} onClick={runScanFiles}><Icon name="scan" size={16} className={isScanningCourses ? 'is-spinning' : ''} /> {isScanningCourses ? 'Scanning...' : 'Scan selected'}</button></div></div><div className="list" aria-busy={isScanningCourses}>{visibleCourses.map((course, index) => { const selected = selectedCourseIds.has(course.id); return <label key={course.id} className={`list-row ${selected ? 'is-selected' : ''}`} title={course.name}><input type="checkbox" checked={selected} disabled={isScanningCourses} onChange={event => setSelectedCourseIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(course.id); else next.delete(course.id); return next; })} /><span className="list-index">{String(index + 1).padStart(2, '0')}</span><span className="list-name">{course.name}</span><span className={`list-state ${selected ? 'is-on' : ''}`}>{selected ? 'Selected' : 'Skipped'}</span></label>; })}{visibleCourses.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No courses found</strong><span>{courses.length ? 'Try a different search.' : 'Start a download to discover courses.'}</span></div>}</div></div>}
@@ -790,7 +1189,7 @@ export function App() {
             </div>
           )}
 
-          {stage === 'summary' && summary && <div className="panel summary-panel"><div className="surface-intro"><div><h2>Download complete</h2><p>Files and course instructions were saved in this read-only run.</p></div><span className="state-badge state-good">Finished</span></div><div className="summary-grid"><div><span>Courses scanned</span><strong>{summary.coursesSelected}</strong></div><div><span>Files found</span><strong>{summary.filesDiscovered}</strong></div><div><span>Downloaded</span><strong className="text-good">{summary.filesDownloaded}</strong></div><div><span>Skipped</span><strong className="text-warn">{summary.filesSkipped}</strong></div><div><span>Failed</span><strong className="text-bad">{summary.filesFailed}</strong></div><div><span>Instruction courses</span><strong>{summary.instructionCoursesSelected}</strong></div><div><span>Instructions saved</span><strong className="text-good">{summary.instructionsDownloaded}</strong></div><div><span>Text discovered</span><strong>{summary.instructionsDiscovered}</strong></div></div>{summary.failedFiles.length > 0 && <ul className="checks">{summary.failedFiles.map(file => <li key={`${file.name}-${file.reason}`} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{file.name}: {file.reason}</span></li>)}</ul>}{summary.instructionWarnings.length > 0 && <ul className="checks">{summary.instructionWarnings.map(warning => <li key={warning} className="check check-warn"><span className="check-dot"><Icon name="warning" size={13} /></span><span className="check-msg">{warning}</span></li>)}</ul>}<div className="btn-row"><button className="btn-primary" onClick={beginDownload}><Icon name="refresh" size={16} /> Run again</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</button><button className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</button></div></div>}
+          {stage === 'summary' && summary && <div className="panel summary-panel"><div className="surface-intro"><div><h2>Download complete</h2><p>Files and course instructions were saved in this read-only run.</p></div><span className="state-badge state-good">Finished</span></div><div className="summary-grid"><div><span>Courses scanned</span><strong>{summary.coursesSelected}</strong></div><div><span>Files found</span><strong>{summary.filesDiscovered}</strong></div><div><span>Downloaded</span><strong className="text-good">{summary.filesDownloaded}</strong></div><div><span>Skipped</span><strong className="text-warn">{summary.filesSkipped}</strong></div>{typeof summary.filesRejected === 'number' && summary.filesRejected > 0 && <div><span>Rejected</span><strong className="text-warn">{summary.filesRejected}</strong></div>}<div><span>Failed</span><strong className="text-bad">{summary.filesFailed}</strong></div><div><span>Instruction courses</span><strong>{summary.instructionCoursesSelected}</strong></div><div><span>Instructions saved</span><strong className="text-good">{summary.instructionsDownloaded}</strong></div><div><span>Text discovered</span><strong>{summary.instructionsDiscovered}</strong></div></div>{summary.failedFiles.length > 0 && <ul className="checks">{summary.failedFiles.map(file => <li key={`${file.name}-${file.reason}`} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{file.name}: {file.reason}</span></li>)}</ul>}{summary.instructionWarnings.length > 0 && <ul className="checks">{summary.instructionWarnings.map(warning => <li key={warning} className="check check-warn"><span className="check-dot"><Icon name="warning" size={13} /></span><span className="check-msg">{warning}</span></li>)}</ul>}<div className="btn-row"><button className="btn-primary" onClick={beginDownload}><Icon name="refresh" size={16} /> Run again</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</button><button className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</button></div></div>}
         </section>}
       </main>
     </div>

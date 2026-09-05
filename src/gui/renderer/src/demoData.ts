@@ -66,6 +66,7 @@ export const DEMO_SUMMARY = {
   filesSelected: DEMO_FILES.length,
   filesDownloaded: 58,
   filesSkipped: 9,
+  filesRejected: 0,
   filesFailed: 5,
   instructionCoursesSelected: 9,
   instructionsDiscovered: 42,

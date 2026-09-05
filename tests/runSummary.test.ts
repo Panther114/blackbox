@@ -27,6 +27,7 @@ describe('run summary writer', () => {
       filesSelected: 80,
       filesDownloaded: 75,
       filesSkipped: 3,
+      filesRejected: 0,
       filesFailed: 2,
       failedFiles: [{ name: 'bad.pdf', reason: 'network' }],
       logFilePath: './logs/blackbox.log',

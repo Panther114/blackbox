@@ -24,4 +24,35 @@ describe('agent content export', () => {
     expect(fs.readFileSync(path.join(root, 'agent-export', 'courses', 'Course One', 'Assignments', `${item.id}.md`), 'utf8')).toContain('console.log(1)');
     fs.rmSync(root, { force: true, recursive: true });
   });
+
+  test('keeps HTML-escaped code inside fenced blocks and inequality prose', () => {
+    const markdown = htmlToMarkdown(
+      '<pre><code>&lt;div class="x"&gt;text&lt;/div&gt;</code></pre><p>a &lt; b and c &gt; d</p>',
+    );
+    expect(markdown).toContain('```');
+    expect(markdown).toContain('<div class="x">text</div>');
+    expect(markdown).toContain('a < b and c > d');
+  });
+
+  test('survives invalid numeric HTML entities', () => {
+    const markdown = htmlToMarkdown('<p>bad &#55296; entity &#99999999; end</p>');
+    expect(markdown).toContain('bad');
+    expect(markdown).toContain('entity');
+    expect(markdown).toContain('end');
+  });
+
+  test('quotes source URLs and keeps zero-point items in frontmatter', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blackboard-agent-'));
+    const item = {
+      id: stableId('item', 'two'), kind: 'content' as const, courseId: 'c1', courseName: 'Course One', sectionName: 'Notes', folderPath: [], title: 'Zero points', instructionsMarkdown: 'note', sourceUrl: 'https://example.com/a b#frag', points: '0', attachmentIds: [], contentHash: contentHash('x'),
+    };
+    writeAgentExport({ outputDir: root, baseUrl: 'https://example.com', courses: [{ id: 'c1', name: 'Course One', url: 'https://example.com/course', path: 'course-one' }], items: [item], attachments: [], warnings: [] });
+    const written = fs.readFileSync(
+      path.join(root, 'agent-export', 'courses', 'Course One', 'Notes', `${item.id}.md`),
+      'utf8',
+    );
+    expect(written).toContain('source: "https://example.com/a b#frag"');
+    expect(written).toContain('points: "0"');
+    fs.rmSync(root, { force: true, recursive: true });
+  });
 });

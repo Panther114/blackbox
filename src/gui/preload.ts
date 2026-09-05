@@ -6,7 +6,7 @@ type WorkflowEvent = { type: string; payload: unknown };
 const api = {
   getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
   loadConfig: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('config:load'),
-  saveSetup: (payload: Record<string, unknown>): Promise<{ ok: boolean }> =>
+  saveSetup: (payload: Record<string, unknown>): Promise<{ ok: boolean; loginTestPassed?: boolean; loginTestError?: string }> =>
     ipcRenderer.invoke('setup:save', payload),
   resetSetup: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('setup:reset'),
   runDoctor: (payload?: { loginTest?: boolean }): Promise<Array<Record<string, unknown>>> =>
@@ -38,6 +38,13 @@ const api = {
   checkForUpdates: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('update:check'),
   downloadUpdate: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('update:download'),
   installUpdate: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('update:install'),
+  loadAutomationSettings: (): Promise<{ settings: Record<string, unknown>; normalDownloadDir: string }> =>
+    ipcRenderer.invoke('automation:load-settings'),
+  saveAutomationSettings: (payload: Record<string, unknown>): Promise<{ ok: boolean; settings: Record<string, unknown> }> =>
+    ipcRenderer.invoke('automation:save-settings', payload),
+  chooseAutomationDirectory: (): Promise<string | null> => ipcRenderer.invoke('automation:choose-directory'),
+  openAutomationDirectory: (): Promise<string> => ipcRenderer.invoke('automation:open-directory'),
+  startAutomationRun: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('automation:start-run'),
   onWorkflowEvent: (handler: (event: WorkflowEvent) => void): (() => void) => {
     const listener = (_: unknown, evt: WorkflowEvent) => handler(evt);
     ipcRenderer.on('workflow:event', listener);

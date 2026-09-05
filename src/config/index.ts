@@ -28,7 +28,23 @@ const ConfigSchema = z.object({
   fileTreePath: z.string().default(''),
   browserProfileDir: z.string().optional(),
   useSystemEdge: z.boolean().default(process.platform === 'win32'),
+  browserBackend: z.enum(['chromium', 'obscura']).default('chromium'),
+  obscuraBinary: z.string().optional(),
+  obscuraStealth: z.boolean().default(true),
+  obscuraProxy: z.string().optional(),
+  obscuraPort: z.number().int().positive().default(9223),
 });
+
+/**
+ * Parse an integer environment value with a safe fallback. A non-numeric
+ * value (e.g. MAX_CONCURRENT_DOWNLOADS=abc) must not fail schema validation
+ * with an opaque error; it falls back to the documented default instead.
+ */
+function intFromEnv(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === '') return fallback;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 /**
  * Load and validate configuration from environment variables
@@ -41,22 +57,27 @@ export function loadConfig(): Config {
     baseUrl: process.env.BB_BASE_URL || 'https://shs.blackboardchina.cn',
     loginUrl: process.env.BB_LOGIN_URL || 'https://shs.blackboardchina.cn/webapps/login/',
     downloadDir,
-    maxConcurrentDownloads: parseInt(process.env.MAX_CONCURRENT_DOWNLOADS || '5', 10),
-    downloadTimeout: parseInt(process.env.DOWNLOAD_TIMEOUT || '60000', 10),
+    maxConcurrentDownloads: intFromEnv(process.env.MAX_CONCURRENT_DOWNLOADS, 5),
+    downloadTimeout: intFromEnv(process.env.DOWNLOAD_TIMEOUT, 60000),
     browserType: (process.env.BROWSER_TYPE || 'chromium') as 'chromium' | 'firefox' | 'webkit',
     headless: process.env.HEADLESS !== 'false',
-    browserTimeout: parseInt(process.env.BROWSER_TIMEOUT || '30000', 10),
+    browserTimeout: intFromEnv(process.env.BROWSER_TIMEOUT, 30000),
     databasePath: process.env.DATABASE_PATH || './blackbox.db',
     logLevel: (process.env.LOG_LEVEL || 'info') as 'debug' | 'info' | 'warn' | 'error',
     logFile: process.env.LOG_FILE || './logs/blackbox.log',
     courseFilter: process.env.COURSE_FILTER,
-    maxRetries: parseInt(process.env.MAX_RETRIES || '3', 10),
-    retryDelay: parseInt(process.env.RETRY_DELAY || '2000', 10),
+    maxRetries: intFromEnv(process.env.MAX_RETRIES, 3),
+    retryDelay: intFromEnv(process.env.RETRY_DELAY, 2000),
     fileTreePath: process.env.FILE_TREE_PATH || path.join(downloadDir, 'file_tree.json'),
     browserProfileDir: process.env.BROWSER_PROFILE_DIR || undefined,
     useSystemEdge: process.env.USE_SYSTEM_EDGE === undefined
       ? process.platform === 'win32'
       : process.env.USE_SYSTEM_EDGE === 'true',
+    browserBackend: (process.env.BROWSER_BACKEND || 'chromium') as 'chromium' | 'obscura',
+    obscuraBinary: process.env.OBSCURA_BINARY || undefined,
+    obscuraStealth: process.env.OBSCURA_STEALTH !== 'false',
+    obscuraProxy: process.env.OBSCURA_PROXY || undefined,
+    obscuraPort: intFromEnv(process.env.OBSCURA_PORT, 9223),
   };
 
   // Validate configuration

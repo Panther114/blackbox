@@ -21,6 +21,7 @@ export interface WorkflowSummary {
   filesSelected: number;
   filesDownloaded: number;
   filesSkipped: number;
+  filesRejected: number;
   filesFailed: number;
   failedFiles: Array<{ name: string; reason: string }>;
   instructionCoursesSelected: number;

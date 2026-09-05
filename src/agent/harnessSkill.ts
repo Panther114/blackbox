@@ -29,11 +29,52 @@ function isManagedSkillAt(skillPath: string): boolean {
   }
 }
 
+function isValidSkillAt(skillPath: string): boolean {
+  const skillFile = path.join(skillPath, 'SKILL.md');
+  if (!fs.existsSync(skillFile)) return false;
+  try {
+    const content = fs.readFileSync(skillFile, 'utf8');
+    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+    if (!frontmatter) return false;
+    const metadata = frontmatter[1];
+    return (
+      /^name:\s*blackbox\s*$/m.test(metadata) &&
+      /^description:\s*\S/m.test(metadata) &&
+      content.indexOf(MANAGED_MARKER, frontmatter[0].length) >= 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recognize a Blackbox-owned skill even when it is damaged: either the managed
+ * marker is present, or the frontmatter still identifies the skill as
+ * "blackbox". This lets install overwrite a stripped-marker file and remove
+ * clean up a half-edited install instead of deadlocking both operations.
+ */
+function isBlackboxOwnedSkillAt(skillPath: string): boolean {
+  if (isManagedSkillAt(skillPath)) return true;
+  const skillFile = path.join(skillPath, 'SKILL.md');
+  if (!fs.existsSync(skillFile)) return false;
+  try {
+    const content = fs.readFileSync(skillFile, 'utf8');
+    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+    if (!frontmatter) return false;
+    return (
+      /^name:\s*blackbox\s*$/m.test(frontmatter[1]) &&
+      /^description:\s*\S/m.test(frontmatter[1])
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function getHarnessSkillStatus(homeDir = homeDirectory()): HarnessSkillStatus {
   const skillPath = getHarnessSkillPath(homeDir);
   const managed = isManagedSkillAt(skillPath);
   return {
-    installed: managed,
+    installed: managed && isValidSkillAt(skillPath),
     path: skillPath,
     managed,
   };
@@ -43,12 +84,12 @@ function buildSkillMarkdown(downloadDir: string): string {
   const exportRoot = path.join(downloadDir, 'agent-export');
   const manifestPath = path.join(exportRoot, 'manifest.json');
   return [
-    MANAGED_MARKER,
     '---',
     'name: ' + HARNESS_SKILL_NAME,
     'description: Read the local BlackboardChina course export produced by Blackbox, a BlackboardChina downloader, without changing Blackboard or submitting coursework.',
     'compatibility: Works with Agent Skills-compatible coding harnesses that discover skills from the universal .agents directory.',
     '---',
+    MANAGED_MARKER,
     '',
     '# Blackbox BlackboardChina course export',
     '',
@@ -74,7 +115,7 @@ export function installHarnessSkill(
   homeDir = homeDirectory(),
 ): HarnessSkillStatus {
   const skillPath = getHarnessSkillPath(homeDir);
-  if (fs.existsSync(skillPath) && !isManagedSkillAt(skillPath)) {
+  if (fs.existsSync(skillPath) && !isBlackboxOwnedSkillAt(skillPath)) {
     throw new Error(
       'Cannot install the Blackbox harness skill because ' +
         skillPath +
@@ -94,7 +135,7 @@ export function installHarnessSkill(
 export function removeHarnessSkill(homeDir = homeDirectory()): HarnessSkillStatus {
   const skillPath = getHarnessSkillPath(homeDir);
   if (!fs.existsSync(skillPath)) return getHarnessSkillStatus(homeDir);
-  if (!isManagedSkillAt(skillPath)) {
+  if (!isBlackboxOwnedSkillAt(skillPath)) {
     throw new Error('Cannot remove ' + skillPath + ' because it is not managed by this app.');
   }
   fs.rmSync(skillPath, { recursive: true, force: true });
