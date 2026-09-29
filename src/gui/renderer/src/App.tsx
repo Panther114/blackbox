@@ -383,7 +383,7 @@ export function App() {
   useEffect(() => {
     if (DEMO_MODE) {
       const demoDownloadDir = 'C:\\Users\\demo\\Downloads\\Blackbox';
-      setVersion('1.1.0');
+      setVersion('1.1.3');
       setConfig(previous => ({ ...previous, username: 'g12345678', password: 'blackboard-demo-password', downloadDir: demoDownloadDir, headless: true, autoCheckUpdates: true }));
       setSavedPassword('blackboard-demo-password');
       setPasswordStored(true);
@@ -1026,9 +1026,9 @@ export function App() {
 
         {activeView === 'download' && stage === 'ready' && isPreparingDownload && <section className="view download-launch" aria-live="polite" data-testid="download-launch"><div className="panel launch-panel"><div className="launch-hero"><div className="launch-visual"><div className="launch-orbit"><AppIcon /></div></div><div className="launch-copy"><h2>Preparing your course list</h2><p>{status || 'Connecting to Blackboard and loading the courses available to you.'}</p></div></div><ProgressBar label={preparationProgress?.label || 'Starting'} value={preparationProgress ? (preparationProgress.completed / preparationProgress.total) * 100 : 8} indeterminate={!preparationProgress} detail={preparationProgress ? `${preparationProgress.completed} of ${preparationProgress.total}` : 'Working'} /><div className="launch-stages">{['Connect', 'Discover courses', 'Choose files'].map((label, index) => { const progress = preparationProgress?.completed || 0; const state = progress > index ? 'done' : progress === index ? 'current' : 'todo'; return <div key={label} className={`launch-stage is-${state}`}><span className="stage-number">{state === 'done' ? <Icon name="check" size={14} /> : index + 1}</span><span>{label}</span></div>; })}</div></div></section>}
 
-        {activeView === 'download' && stage === 'ready' && !isPreparingDownload && <section className="view"><div className="panel ready-panel"><div className="ready-main"><span className="ready-icon"><AppIcon /></span><div><h2>Ready to download</h2><p>Choose courses, review files, and save documents to your configured folder.</p></div></div><div className="ready-actions"><button className="btn-primary btn-lg" onClick={hasCredentials ? beginDownload : () => { setActiveView('settings'); setSettingsSection('credentials'); }}><Icon name={hasCredentials ? 'download' : 'key'} size={17} />{hasCredentials ? 'Start a download' : 'Open credentials'}</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={17} /> Open downloads</button><button className="btn-danger" onClick={clearDownloads}><Icon name="x" size={17} /> Clear downloaded files</button></div><dl className="ready-meta"><div><dt>Access</dt><dd>{hasCredentials ? 'Credentials ready' : 'Credentials required'}</dd></div><div><dt>Save to</dt><dd className="mono">{paths.downloads || config.downloadDir || '...'}</dd></div></dl></div></section>}
+        {activeView === 'download' && stage === 'ready' && !isPreparingDownload && <section className="view"><div className="panel ready-panel"><div className="ready-main"><span className="ready-icon"><Icon name={'download'} size={24} /></span><div><h2>Ready to download</h2><p>Choose courses, review files, and save documents to your configured folder.</p></div></div><div className="ready-actions"><button className="btn-primary btn-lg" onClick={hasCredentials ? beginDownload : () => { setActiveView('settings'); setSettingsSection('credentials'); }}><Icon name={hasCredentials ? 'download' : 'key'} size={17} />{hasCredentials ? 'Start a download' : 'Open credentials'}</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={17} /> Open downloads</button><button className="btn-danger" onClick={clearDownloads}><Icon name="x" size={17} /> Clear downloaded files</button></div><dl className="ready-meta"><div><dt>Access</dt><dd>{hasCredentials ? 'Credentials ready' : 'Credentials required'}</dd></div><div><dt>Save to</dt><dd className="mono">{paths.downloads || config.downloadDir || '...'}</dd></div></dl></div></section>}
 
-        {activeView === 'settings' && <section className="view settings-view"><nav className="settings-tabs" aria-label="Settings sections">{(['credentials', 'courses', 'diagnostics', 'updates'] as SettingsSection[]).map(section => <button key={section} className={settingsSection === section ? 'is-active' : ''} onClick={() => setSettingsSection(section)}>{section === 'credentials' ? 'Credentials' : section === 'courses' ? 'Courses' : section === 'diagnostics' ? 'Diagnostics' : 'Updates'}</button>)}</nav>
+        {activeView === 'settings' && <section className="view settings-view"><nav className="settings-tabs" aria-label="Settings sections">{(['credentials', 'courses', 'diagnostics', 'updates'] as SettingsSection[]).map(section => <button key={section} className={settingsSection === section ? 'is-active' : ''} aria-current={settingsSection === section ? 'page' : undefined} onClick={() => setSettingsSection(section)}>{section === 'credentials' ? 'Credentials' : section === 'courses' ? 'Courses' : section === 'diagnostics' ? 'Diagnostics' : 'Updates'}</button>)}</nav>
           <div className="settings-utility"><span>Manage local Blackbox data</span><button className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</button></div>
 
           {settingsSection === 'credentials' && (
@@ -1068,8 +1068,8 @@ export function App() {
 
 {activeView === 'automation' && <section className="view" data-testid="automation-panel">
   <nav className="settings-tabs" aria-label="Automation sections">
-    <button className={automationTab === 'downloads' ? 'is-active' : ''} onClick={() => setAutomationTab('downloads')}>Downloads</button>
-    <button className={automationTab === 'settings' ? 'is-active' : ''} onClick={() => setAutomationTab('settings')}>Settings</button>
+    <button className={automationTab === 'downloads' ? 'is-active' : ''} aria-current={automationTab === 'downloads' ? 'page' : undefined} onClick={() => setAutomationTab('downloads')}>Downloads</button>
+    <button className={automationTab === 'settings' ? 'is-active' : ''} aria-current={automationTab === 'settings' ? 'page' : undefined} onClick={() => setAutomationTab('settings')}>Settings</button>
   </nav>
 
   {automationTab === 'settings' && (

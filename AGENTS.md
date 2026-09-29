@@ -23,3 +23,17 @@ Example shape (Chinese build):
 - 修复登录时弹窗遮挡按钮导致登录失败的问题
 - 现在会实时导出运行日志（JSON 与 Excel）
 ```
+
+## Renderer UI
+
+- Keep visual-only changes in `src/gui/renderer/**`; preserve the Electron
+  main/preload/worker interfaces and downloader behavior.
+- Keep the renderer self-contained: Bai Jamjuree for the interface, with its
+  font file and license bundled under
+  `src/gui/renderer/src/assets/fonts/`. Do not request fonts at runtime.
+- Use the mineral canvas, obsidian rail, cobalt actions, and restrained lime
+  status signals. Keep course/file tables legible and retain existing product
+  copy. Preserve the `window.blackboxGui` bridge and `data-testid` selectors
+  when restructuring presentation.
+- Check desktop layouts at the supported 980×680 minimum window size before
+  packaging.
