@@ -349,6 +349,7 @@ export function App() {
   const [courseSearch, setCourseSearch] = useState('');
   const [selectedCourseIds, setSelectedCourseIds] = useState<Set<string>>(new Set());
   const [selectedInstructionCourseIds, setSelectedInstructionCourseIds] = useState<Set<string>>(new Set());
+  const [instructionPickerExpanded, setInstructionPickerExpanded] = useState(false);
   const [files, setFiles] = useState<DiscoveredFile[]>([]);
   const [fileSearch, setFileSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -536,6 +537,7 @@ export function App() {
   }, []);
 
   useEffect(() => { if (activeView !== 'settings' || settingsSection !== 'credentials') setShowPassword(false); }, [activeView, settingsSection]);
+  useEffect(() => { if (activeView !== 'download') setInstructionPickerExpanded(false); }, [activeView]);
 
   const deferredCourseSearch = useDeferredValue(courseSearch);
   const deferredFileSearch = useDeferredValue(fileSearch);
@@ -725,6 +727,7 @@ export function App() {
 
   async function runScanFiles() {
     if (selectedCourses.length === 0 || isScanningCourses) return;
+    setInstructionPickerExpanded(false);
     setActiveView('download'); setIsScanningCourses(true); setErrorMessage('');
     if (DEMO_MODE) { await runDemoScan(); return; }
     await runWithUiError(async () => {
@@ -1020,9 +1023,9 @@ export function App() {
 
       <main className="stage">
         <header className="topbar"><div className="topbar-crumb"><h1><Icon name={activeIcon} size={22} /> {activeLabel}</h1></div><div className="topbar-meta"><span className="pill pill-soft">{version || 'Loading...'}</span>{DEMO_MODE && <span className="pill pill-demo">Offline demo</span>}{hasCredentials ? <span className="pill pill-ok"><Icon name="shield" size={14} /> Credentials ready</span> : <span className="pill pill-warn"><Icon name="key" size={14} /> Credentials needed</span>}</div></header>
-        {showGlobalStatus && <div className="banner banner-info" role="status"><Icon name="info" size={16} /><span>{status}</span></div>}
-        {errorMessage && <div className="banner banner-error" role="alert"><Icon name="alert" size={17} /><span><strong>Something went wrong</strong>{errorMessage}</span></div>}
-        {activeView === 'settings' && settingsSection === 'diagnostics' && diagnosticsProgress && <div className="diagnostics-progress-top" data-testid="diagnostics-progress"><ProgressBar label={diagnosticsProgress.running ? (diagnosticsProgress.loginTest ? 'Running diagnostics and login test' : 'Running diagnostics') : 'Diagnostics complete'} value={diagnosticsPercent} detail={`${diagnosticsProgress.completed} / ${diagnosticsProgress.total}`} subdetail={diagnosticsProgress.current} /></div>}
+        <div className="notice-lane">
+          {errorMessage ? <div className="banner banner-error" role="alert" title={errorMessage}><Icon name="alert" size={17} /><span><strong>Something went wrong</strong>{errorMessage}</span></div> : activeView === 'settings' && settingsSection === 'diagnostics' && diagnosticsProgress ? <div className="diagnostics-progress-top" data-testid="diagnostics-progress"><ProgressBar label={diagnosticsProgress.running ? (diagnosticsProgress.loginTest ? 'Running diagnostics and login test' : 'Running diagnostics') : 'Diagnostics complete'} value={diagnosticsPercent} detail={`${diagnosticsProgress.completed} / ${diagnosticsProgress.total}`} /></div> : showGlobalStatus ? <div className="banner banner-info" role="status" title={status}><Icon name="info" size={16} /><span>{status}</span></div> : null}
+        </div>
 
         {activeView === 'download' && stage === 'ready' && isPreparingDownload && <section className="view download-launch" aria-live="polite" data-testid="download-launch"><div className="panel launch-panel"><div className="launch-hero"><div className="launch-visual"><div className="launch-orbit"><AppIcon /></div></div><div className="launch-copy"><h2>Preparing your course list</h2><p>{status || 'Connecting to Blackboard and loading the courses available to you.'}</p></div></div><ProgressBar label={preparationProgress?.label || 'Starting'} value={preparationProgress ? (preparationProgress.completed / preparationProgress.total) * 100 : 8} indeterminate={!preparationProgress} detail={preparationProgress ? `${preparationProgress.completed} of ${preparationProgress.total}` : 'Working'} /><div className="launch-stages">{['Connect', 'Discover courses', 'Choose files'].map((label, index) => { const progress = preparationProgress?.completed || 0; const state = progress > index ? 'done' : progress === index ? 'current' : 'todo'; return <div key={label} className={`launch-stage is-${state}`}><span className="stage-number">{state === 'done' ? <Icon name="check" size={14} /> : index + 1}</span><span>{label}</span></div>; })}</div></div></section>}
 
@@ -1169,14 +1172,84 @@ export function App() {
 
 
         {activeView === 'download' && (stage === 'courses' || stage === 'files' || stage === 'download' || stage === 'summary') && <section className="view download-view"><div className="download-stepper-row"><Stepper current={wizardStepIndex(stage)} />{stage !== 'download' && <button className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</button>}</div>
-          {stage === 'courses' && <div className="panel selection-panel" data-testid="course-list-panel"><div className="selection-head"><div><h2>Choose courses</h2><p>Select the courses to scan for files.</p></div><CountSummary items={[`${visibleCourses.length} shown`, `${selectedCourseIds.size} selected`, `${courses.length} total`]} /></div>{isScanningCourses && discoveryProgress && <ProgressBar label={discoveryProgress.phase === 'metadata' ? 'Reading file details' : 'Scanning course content'} value={discoveryPercent} detail={`${discoveryProgress.completed} / ${discoveryProgress.total}`} subdetail={discoveryProgress.currentSection || discoveryProgress.currentCourse || 'Working through the selected courses'} dataTestId="discovery-progress" />}<div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter courses" value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label><div className="btn-row btn-row-inline"><button className="btn-secondary" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set(courses.map(course => course.id)))}><Icon name="check-square" size={16} /> Select all</button><button className="btn-ghost" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set())}><Icon name="x" size={16} /> Clear</button><button className="btn-primary" disabled={selectedCourses.length === 0 || isScanningCourses} onClick={runScanFiles}><Icon name="scan" size={16} className={isScanningCourses ? 'is-spinning' : ''} /> {isScanningCourses ? 'Scanning...' : 'Scan selected'}</button></div></div><div className="list" aria-busy={isScanningCourses}>{visibleCourses.map((course, index) => { const selected = selectedCourseIds.has(course.id); return <label key={course.id} className={`list-row ${selected ? 'is-selected' : ''}`} title={course.name}><input type="checkbox" checked={selected} disabled={isScanningCourses} onChange={event => setSelectedCourseIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(course.id); else next.delete(course.id); return next; })} /><span className="list-index">{String(index + 1).padStart(2, '0')}</span><span className="list-name">{course.name}</span><span className={`list-state ${selected ? 'is-on' : ''}`}>{selected ? 'Selected' : 'Skipped'}</span></label>; })}{visibleCourses.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No courses found</strong><span>{courses.length ? 'Try a different search.' : 'Start a download to discover courses.'}</span></div>}</div></div>}
+          {stage === 'courses' && (
+            <div className="panel selection-panel course-selection-panel" data-testid="course-list-panel">
+              <div className="selection-head">
+                <div><h2>Choose courses</h2><p>Select the courses to scan for files.</p></div>
+                <CountSummary items={[`${visibleCourses.length} shown`, `${selectedCourseIds.size} selected`, `${courses.length} total`]} />
+              </div>
+              <div className="course-progress-slot" aria-busy={isScanningCourses}>
+                {isScanningCourses ? <ProgressBar label={discoveryProgress?.phase === 'metadata' ? 'Reading file details' : 'Scanning course content'} value={discoveryPercent} detail={discoveryProgress?.total ? `${discoveryProgress.completed} / ${discoveryProgress.total}` : 'Starting'} indeterminate={!discoveryProgress?.total} dataTestId="discovery-progress" /> : <span className="course-progress-idle">Ready to scan</span>}
+              </div>
+              <div className="toolbar course-toolbar">
+                <label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter courses" value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label>
+                <div className="btn-row btn-row-inline">
+                  <button className="btn-secondary" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set(courses.map(course => course.id)))}><Icon name="check-square" size={16} /> Select all</button>
+                  <button className="btn-ghost" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set())}><Icon name="x" size={16} /> Clear</button>
+                  <button className="btn-primary" disabled={selectedCourses.length === 0 || isScanningCourses} onClick={runScanFiles}><Icon name="scan" size={16} className={isScanningCourses ? 'is-spinning' : ''} /> {isScanningCourses ? 'Scanning...' : 'Scan selected'}</button>
+                </div>
+              </div>
+              <div className="list" aria-busy={isScanningCourses}>
+                {visibleCourses.map((course, index) => {
+                  const selected = selectedCourseIds.has(course.id);
+                  return <label key={course.id} className={`list-row ${selected ? 'is-selected' : ''}`} title={course.name}>
+                    <input type="checkbox" checked={selected} disabled={isScanningCourses} onChange={event => setSelectedCourseIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(course.id); else next.delete(course.id); return next; })} />
+                    <span className="list-index">{String(index + 1).padStart(2, '0')}</span>
+                    <span className="list-name">{course.name}</span>
+                    <span className={`list-state ${selected ? 'is-on' : ''}`}>{selected ? 'Selected' : 'Skipped'}</span>
+                  </label>;
+                })}
+                {visibleCourses.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No courses found</strong><span>{courses.length ? 'Try a different search.' : 'Start a download to discover courses.'}</span></div>}
+              </div>
+            </div>
+          )}
 
           {stage === 'files' && (
-            <div className="panel selection-panel" data-testid="file-list-panel">
-              <div className="selection-head"><div><h2>Choose files</h2><p>Review files and choose which courses also include instructional text.</p></div><CountSummary items={[`${selectableFiles.length} shown`, `${selectedFileUrls.size} selected`, `${files.length} total`]} /></div>
-              <CourseInstructionPicker courses={selectedCourses} selectedIds={selectedInstructionCourseIds} onToggle={courseId => setSelectedInstructionCourseIds(previous => { const next = new Set(previous); if (next.has(courseId)) next.delete(courseId); else next.add(courseId); return next; })} onSelectAll={() => setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id)))} onClear={() => setSelectedInstructionCourseIds(new Set())} />
-              <div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter files" value={fileSearch} onChange={event => setFileSearch(event.target.value)} /></label><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">All types</option>{fileTypes.map(type => <option key={type} value={type}>{type.toUpperCase()}</option>)}</select><div className="btn-row btn-row-inline"><button className="btn-secondary" onClick={() => setSelectedFileUrls(new Set(files.map(file => file.url)))}><Icon name="check-square" size={16} /> Select all files</button><button className="btn-ghost" onClick={() => setSelectedFileUrls(new Set())}><Icon name="x" size={16} /> Clear files</button><button className="btn-primary" data-testid="download-selected" disabled={selectedFiles.length === 0 && selectedInstructionCourses.length === 0} onClick={startDownload}><Icon name="download" size={16} /> {selectedFiles.length > 0 && selectedInstructionCourses.length > 0 ? `Download ${selectedFiles.length} + text` : selectedFiles.length > 0 ? `Download ${selectedFiles.length}` : 'Download instructions'}</button></div></div>
-              <div className="table"><div className="table-head"><span /><span>Name</span><span>Type</span><span>Size</span><span>Course / section</span><span>State</span></div>{selectableFiles.map(file => { const selected = selectedFileUrls.has(file.url); return <div className={`table-row selectable ${selected ? 'is-on' : ''}`} key={file.url} role="checkbox" aria-checked={selected} tabIndex={0} onClick={() => toggleFileSelection(file.url)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleFileSelection(file.url); } }}><span><input type="checkbox" checked={selected} onClick={event => event.stopPropagation()} onChange={() => toggleFileSelection(file.url)} /></span><span className="file-name"><Icon name="file" size={15} /><span className="ellipsis">{file.name}</span></span><span>{(file.fileType || '?').toUpperCase()}</span><span>{file.size ? formatBytes(file.size) : '?'}</span><span className="ellipsis">{file.courseName} / {file.sectionName}</span><span className={`tag ${selected ? 'tag-on' : 'tag-off'}`}>{selected ? 'Selected' : 'Ignored'}</span></div>; })}{selectableFiles.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No files found</strong><span>{files.length ? 'Try a different search or type.' : 'Scan selected courses to find files.'}</span></div>}</div>
+            <div className="panel selection-panel files-panel" data-testid="file-list-panel">
+              <div className="selection-head">
+                <div><h2>Choose files</h2><p>Review files and choose which courses also include instructional text.</p></div>
+                <CountSummary items={[`${selectableFiles.length} shown`, `${selectedFileUrls.size} selected`, `${files.length} total`]} />
+              </div>
+              <CourseInstructionPicker
+                courses={selectedCourses}
+                selectedIds={selectedInstructionCourseIds}
+                expanded={instructionPickerExpanded}
+                onToggleExpanded={() => setInstructionPickerExpanded(value => !value)}
+                onToggle={courseId => setSelectedInstructionCourseIds(previous => { const next = new Set(previous); if (next.has(courseId)) next.delete(courseId); else next.add(courseId); return next; })}
+                onSelectAll={() => setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id)))}
+                onClear={() => setSelectedInstructionCourseIds(new Set())}
+              />
+              <div className="toolbar file-toolbar">
+                <label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter files" value={fileSearch} onChange={event => setFileSearch(event.target.value)} /></label>
+                <select value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">All types</option>{fileTypes.map(type => <option key={type} value={type}>{type.toUpperCase()}</option>)}</select>
+                <div className="btn-row btn-row-inline file-toolbar-actions">
+                  <button className="btn-secondary" onClick={() => setSelectedFileUrls(new Set(files.map(file => file.url)))}><Icon name="check-square" size={16} /> Select all files</button>
+                  <button className="btn-ghost" onClick={() => setSelectedFileUrls(new Set())}><Icon name="x" size={16} /> Clear files</button>
+                </div>
+              </div>
+              <div className="table">
+                <div className="table-head"><span /><span>Name</span><span>Type</span><span>Size</span><span>Course / section</span><span>State</span></div>
+                {selectableFiles.map(file => {
+                  const selected = selectedFileUrls.has(file.url);
+                  return <div className={`table-row selectable ${selected ? 'is-on' : ''}`} key={file.url} role="checkbox" aria-checked={selected} tabIndex={0} onClick={() => toggleFileSelection(file.url)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleFileSelection(file.url); } }}>
+                    <span><input type="checkbox" checked={selected} onClick={event => event.stopPropagation()} onChange={() => toggleFileSelection(file.url)} /></span>
+                    <span className="file-name"><Icon name="file" size={15} /><span className="ellipsis">{file.name}</span></span>
+                    <span>{(file.fileType || '?').toUpperCase()}</span><span>{file.size ? formatBytes(file.size) : '?'}</span>
+                    <span className="ellipsis">{file.courseName} / {file.sectionName}</span>
+                    <span className={`tag ${selected ? 'tag-on' : 'tag-off'}`}>{selected ? 'Selected' : 'Ignored'}</span>
+                  </div>;
+                })}
+                {selectableFiles.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No files found</strong><span>{files.length ? 'Try a different search or type.' : 'Scan selected courses to find files.'}</span></div>}
+              </div>
+              <div className="action-bar" data-testid="files-action-bar">
+                <div className="action-bar-summary">
+                  <strong>{selectedFiles.length} files selected</strong>
+                  <span>{selectedInstructionCourses.length > 0 ? `Text from ${selectedInstructionCourses.length} course${selectedInstructionCourses.length === 1 ? '' : 's'}` : 'No course text selected'}</span>
+                </div>
+                <button className="btn-primary" data-testid="download-selected" disabled={selectedFiles.length === 0 && selectedInstructionCourses.length === 0} onClick={startDownload}>
+                  <Icon name="download" size={16} /> {selectedFiles.length > 0 && selectedInstructionCourses.length > 0 ? `Download ${selectedFiles.length} + text` : selectedFiles.length > 0 ? `Download ${selectedFiles.length}` : 'Download instructions'}
+                </button>
+              </div>
             </div>
           )}
 
@@ -1199,34 +1272,52 @@ export function App() {
 function CourseInstructionPicker({
   courses,
   selectedIds,
+  expanded,
+  onToggleExpanded,
   onToggle,
   onSelectAll,
   onClear,
 }: {
   courses: Course[];
   selectedIds: Set<string>;
+  expanded: boolean;
+  onToggleExpanded: () => void;
   onToggle: (courseId: string) => void;
   onSelectAll: () => void;
   onClear: () => void;
 }) {
-  return <section className="instruction-picker" data-testid="instruction-picker">
+  return <section className={`instruction-picker ${expanded ? 'is-expanded' : 'is-collapsed'}`} data-testid="instruction-picker">
     <div className="instruction-picker-head">
-      <div><span className="instruction-eyebrow"><Icon name="book" size={14} /> Course-level text</span><h3>Include instructions and text</h3><p>Save every readable instruction, assignment, announcement, and text item for the included courses. Individual items are included automatically.</p></div>
-      <CountSummary items={[`${selectedIds.size} included`, `${courses.length} courses`]} />
+      <div className="instruction-picker-title">
+        <span className="instruction-eyebrow"><Icon name="book" size={14} /> Course-level text</span>
+        <h3>Include instructions and text</h3>
+      </div>
+      <div className="instruction-picker-control">
+        <CountSummary items={[`${selectedIds.size} included`, `${courses.length} courses`]} />
+        <button type="button" className="btn-chip" data-testid="instruction-picker-toggle" aria-expanded={expanded} aria-controls="course-instruction-list" onClick={onToggleExpanded}>
+          <Icon name="chevron-down" size={14} className={expanded ? 'is-flipped' : ''} />
+          {expanded ? 'Done' : 'Choose text courses'}
+        </button>
+      </div>
     </div>
-    <div className="instruction-course-list">
-      {courses.map(course => {
-        const selected = selectedIds.has(course.id);
-        return <label key={course.id} className={`instruction-course-row ${selected ? 'is-selected' : ''}`} title={course.name}>
-          <input type="checkbox" data-testid={`instruction-course-${course.id}`} checked={selected} onChange={() => onToggle(course.id)} />
-          <span className="instruction-course-icon"><Icon name="book" size={16} /></span>
-          <span className="instruction-course-copy"><strong className="ellipsis">{course.name}</strong><small>All readable course content</small></span>
-          <span className={`instruction-course-state ${selected ? 'is-on' : ''}`}>{selected ? 'Included' : 'Skipped'}</span>
-        </label>;
-      })}
-      {courses.length === 0 && <div className="empty-inline">Select at least one course to include its instructions.</div>}
+    <div id="course-instruction-list" className="instruction-reveal" aria-hidden={!expanded}>
+      <div className="instruction-reveal-inner">
+        <p className="instruction-reveal-note">Save every readable instruction, assignment, announcement, and text item for the included courses. Individual items are included automatically.</p>
+        <div className="instruction-course-list">
+          {courses.map(course => {
+            const selected = selectedIds.has(course.id);
+            return <label key={course.id} className={`instruction-course-row ${selected ? 'is-selected' : ''}`} title={course.name}>
+              <input type="checkbox" data-testid={`instruction-course-${course.id}`} checked={selected} disabled={!expanded} onChange={() => onToggle(course.id)} />
+              <span className="instruction-course-icon"><Icon name="book" size={16} /></span>
+              <span className="instruction-course-copy"><strong className="ellipsis">{course.name}</strong><small>All readable course content</small></span>
+              <span className={`instruction-course-state ${selected ? 'is-on' : ''}`}>{selected ? 'Included' : 'Skipped'}</span>
+            </label>;
+          })}
+          {courses.length === 0 && <div className="empty-inline">Select at least one course to include its instructions.</div>}
+        </div>
+        <div className="instruction-picker-footer"><span>{selectedIds.size > 0 ? `${selectedIds.size} course${selectedIds.size === 1 ? '' : 's'} will be scraped completely.` : 'No course instructions selected.'}</span><div className="btn-row btn-row-inline"><button className="btn-ghost btn-compact" onClick={onSelectAll} disabled={!expanded || courses.length === 0}>Include all</button><button className="btn-ghost btn-compact" onClick={onClear} disabled={!expanded || selectedIds.size === 0}>Clear</button></div></div>
+      </div>
     </div>
-    <div className="instruction-picker-footer"><span>{selectedIds.size > 0 ? `${selectedIds.size} course${selectedIds.size === 1 ? '' : 's'} will be scraped completely.` : 'No course instructions selected.'}</span><div className="btn-row btn-row-inline"><button className="btn-ghost btn-compact" onClick={onSelectAll} disabled={courses.length === 0}>Include all</button><button className="btn-ghost btn-compact" onClick={onClear} disabled={selectedIds.size === 0}>Clear</button></div></div>
   </section>;
 }
 
