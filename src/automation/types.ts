@@ -22,7 +22,7 @@ export const AUTOMATION_DEFAULT_MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 export const AUTOMATION_DEFAULT_EXCLUDED_EXTENSIONS = ['.mp3', '.mp4'];
 
 /** Status of a single G-number inside a run. */
-export type AutomationGnumberStatus = 'pending' | 'logging-in' | 'discovering' | 'downloading' | 'done' | 'failed';
+export type AutomationGnumberStatus = 'pending' | 'logging-in' | 'discovering' | 'downloading' | 'done' | 'failed' | 'cancelled';
 
 export interface AutomationGnumberState {
   gnumber: string;
@@ -77,6 +77,8 @@ export interface AutomationRunSummary {
   runlogPath: string;
   xlsxPath: string;
   debugPath: string;
+  /** True when the run was cancelled by the user (partial results). */
+  cancelled?: boolean;
 }
 
 /** Automation events forwarded to the renderer. */
@@ -86,9 +88,11 @@ export type AutomationEvent =
   | { type: 'automation:gnumber:status'; payload: { gnumber: string; status: AutomationGnumberStatus; error?: string } }
   | { type: 'automation:gnumber:courses'; payload: { gnumber: string; courses: string[] } }
   | { type: 'automation:course:claimed'; payload: { gnumber: string; courseId: string; course: string } }
+  | { type: 'automation:course:released'; payload: { gnumber: string; courseId: string; course: string; reason: string } }
   | { type: 'automation:course:skipped'; payload: { gnumber: string; courseId: string; course: string; owner: string } }
   | { type: 'automation:file:progress'; payload: { gnumber: string; name: string; downloaded: number; total: number } }
   | { type: 'automation:file:done'; payload: { gnumber: string; name: string; size: number } }
   | { type: 'automation:course:done'; payload: { gnumber: string; course: string; files: number; instructions: number } }
   | { type: 'automation:gnumber:done'; payload: { gnumber: string; status: AutomationGnumberStatus; error?: string } }
-  | { type: 'automation:done'; payload: AutomationRunSummary };
+  | { type: 'automation:done'; payload: AutomationRunSummary }
+  | { type: 'automation:cancelled'; payload: AutomationRunSummary };

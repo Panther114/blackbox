@@ -1,4 +1,5 @@
 import { compactConfigOverrides, getConfig } from '../config';
+import { DownloadLayout, ExistingFileState } from '../types';
 import { writeRunSummary, RunSummaryReport } from '../utils/runSummary';
 import { DownloadWorkflow } from '../workflow/downloadWorkflow';
 import { AutomationRunner } from '../automation';
@@ -26,8 +27,11 @@ let runState = {
   instructionsDownloaded: 0,
   instructionWarnings: [] as string[],
   skippedOnDisk: 0,
+  alreadySaved: 0,
   failedFiles: [] as Array<{ name: string; reason: string }>,
 };
+/** Per-layout "already on disk" state of the discovered files (selection screen). */
+let discoveredExisting: Record<string, ExistingFileState> = {};
 let runSummaryContext = {
   startedAt: new Date().toISOString(),
   logFilePath: './logs/blackbox.log',
@@ -63,8 +67,10 @@ function resetRunState(): void {
     instructionsDownloaded: 0,
     instructionWarnings: [],
     skippedOnDisk: 0,
+    alreadySaved: 0,
     failedFiles: [],
   };
+  discoveredExisting = {};
 }
 
 function buildRunSummaryReport(runError?: string): RunSummaryReport {
@@ -76,7 +82,10 @@ function buildRunSummaryReport(runError?: string): RunSummaryReport {
     filesDiscovered: runState.filesDiscovered,
     filesSelected: runState.filesSelected,
     filesDownloaded: runState.filesDownloaded,
-    filesSkipped: runState.filesSkipped + runState.skippedOnDisk,
+    // "Skipped" describes this run only; files the layout already held before
+    // the run are reported separately as already saved.
+    filesSkipped: runState.filesSkipped,
+    filesAlreadySaved: runState.alreadySaved,
     filesRejected: runState.filesRejected,
     filesFailed: runState.filesFailed,
     failedFiles: runState.failedFiles,
@@ -160,6 +169,7 @@ async function startWorkflow(payload: WorkerCommandMap['startWorkflow'] = {}): P
     'download:error',
     'download:skip',
     'download:rejected',
+    'download:cancel',
     'summary:ready',
   ];
 
@@ -203,18 +213,24 @@ async function discoverFiles(payload: WorkerCommandMap['discoverFiles']): Promis
   const result = await workflow.discoverFiles(selectedCourses);
   runState.filesDiscovered = result.discovered.length;
   runState.skippedOnDisk = result.skippedOnDisk;
+  discoveredExisting = result.existing || {};
   return result;
 }
 
 async function download(payload: WorkerCommandMap['download']): Promise<WorkerResponseMap['download']> {
   if (!workflow) throw new Error('Workflow not started');
+  const activeWorkflow = workflow;
   const selectedFiles = payload?.files || [];
   const instructionCourses = payload?.instructionCourses || [];
+  const layout: DownloadLayout = payload?.layout === 'flat' ? 'flat' : 'hierarchy';
+  // Files the chosen layout already held when the run started (counted per
+  // layout, so a flat run does not claim a folder-structure run's files).
+  runState.alreadySaved = Object.values(discoveredExisting).filter(state => state[layout]).length;
   runState.filesSelected = selectedFiles.length;
   runState.instructionCoursesSelected = instructionCourses.length;
   try {
     try {
-      const instructionResult = await workflow.downloadSelected(selectedFiles, instructionCourses);
+      const instructionResult = await activeWorkflow.downloadSelected(selectedFiles, instructionCourses, layout);
       runState.instructionsDiscovered = instructionResult.instructionsDiscovered;
       runState.instructionsDownloaded = instructionResult.instructionsDownloaded;
       runState.instructionWarnings = instructionResult.instructionWarnings;
@@ -230,7 +246,8 @@ async function download(payload: WorkerCommandMap['download']): Promise<WorkerRe
     filesDiscovered: runState.filesDiscovered,
     filesSelected: runState.filesSelected,
     filesDownloaded: runState.filesDownloaded,
-    filesSkipped: runState.filesSkipped + runState.skippedOnDisk,
+    filesSkipped: runState.filesSkipped,
+    alreadySaved: runState.alreadySaved,
     filesRejected: runState.filesRejected,
     filesFailed: runState.filesFailed,
     failedFiles: runState.failedFiles,
@@ -238,14 +255,27 @@ async function download(payload: WorkerCommandMap['download']): Promise<WorkerRe
     instructionsDiscovered: runState.instructionsDiscovered,
     instructionsDownloaded: runState.instructionsDownloaded,
     instructionWarnings: runState.instructionWarnings,
+    cancelled: activeWorkflow.isCancelled(),
   };
 
   writeSummarySafely(buildRunSummaryReport());
-  workflow.emitSummary(summary);
+  activeWorkflow.emitSummary(summary);
   return summary;
   } finally {
     await cleanupWorkflow();
   }
+}
+
+/**
+ * Cancel the running normal download. Like automationCancel this skips the
+ * command queue: worker commands are serialized behind the in-flight download,
+ * so a queued cancel would only run after the download already finished.
+ */
+function downloadCancel(): WorkerResponseMap['downloadCancel'] {
+  const activeWorkflow = workflow;
+  if (!activeWorkflow) return { cancelled: false, running: false };
+  activeWorkflow.cancel();
+  return { cancelled: true, running: true };
 }
 
 async function cleanup(): Promise<WorkerResponseMap['cleanup']> {
@@ -263,12 +293,26 @@ async function shutdown(): Promise<WorkerResponseMap['shutdown']> {
  * course dedupe across sessions. Events stream to the renderer in real time
  * and the JSON/XLSX run log is written into the automation download directory.
  */
+let activeAutomationRunner: AutomationRunner | null = null;
+
 async function automationRun(payload: WorkerCommandMap['automationRun']): Promise<WorkerResponseMap['automationRun']> {
   const settings = payload?.settings as AutomationSettings | undefined;
   if (!settings) throw new Error('Automation settings are missing.');
   await cleanupWorkflow();
   const runner = new AutomationRunner(settings, (event) => sendEvent(event.type, event.payload));
-  return runner.run();
+  activeAutomationRunner = runner;
+  try {
+    return await runner.run(payload?.normalDownloadDir || '');
+  } finally {
+    if (activeAutomationRunner === runner) activeAutomationRunner = null;
+  }
+}
+
+async function automationCancel(): Promise<WorkerResponseMap['automationCancel']> {
+  const runner = activeAutomationRunner;
+  if (!runner) return { cancelled: false, running: false };
+  runner.abort();
+  return { cancelled: true, running: true };
 }
 
 async function handleCommand(
@@ -283,8 +327,12 @@ async function handleCommand(
       return discoverFiles(message.payload as WorkerCommandMap['discoverFiles']);
     case 'download':
       return download(message.payload as WorkerCommandMap['download']);
+    case 'downloadCancel':
+      return downloadCancel();
     case 'automationRun':
       return automationRun(message.payload as WorkerCommandMap['automationRun']);
+    case 'automationCancel':
+      return automationCancel();
     case 'cleanup':
       return cleanup();
     case 'shutdown':
@@ -304,6 +352,20 @@ async function processLine(line: string): Promise<void> {
 
   if (message.kind !== 'command' || !message.id || !message.command) {
     sendLog('warn', `Ignoring malformed command: ${line}`);
+    return;
+  }
+
+  // Cancels must jump the queue: worker commands are serialized behind an
+  // in-flight run, so a queued cancel would only fire after the run already
+  // finished. Aborting is synchronous and safe to run inline.
+  if (message.command === 'automationCancel' || message.command === 'downloadCancel') {
+    try {
+      const data = message.command === 'automationCancel' ? await automationCancel() : downloadCancel();
+      send({ kind: 'response', id: message.id, ok: true, data });
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      send({ kind: 'response', id: message.id, ok: false, error: messageText });
+    }
     return;
   }
 

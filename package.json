@@ -1,6 +1,6 @@
 {
   "name": "blackbox",
-  "version": "1.1.3",
+  "version": "1.2.0",
   "description": "Blackbox desktop and agent-ready BlackboardChina course-material downloader",
   "main": "dist/gui/main.js",
   "desktopName": "blackbox",
@@ -12,7 +12,7 @@
     "bootstrap:gui": "node scripts/bootstrap.js --mode=gui",
     "build": "node scripts/clean-dist.js && tsc",
     "prepack": "npm run build",
-    "build:gui": "node scripts/clean-dist.js && tsc -p tsconfig.gui.json && vite build --config vite.gui.config.ts",
+    "build:gui": "node scripts/clean-dist.js && tsc -p tsconfig.gui.json && npm run typecheck:renderer && vite build --config vite.gui.config.ts && node scripts/copy-renderer-font-licenses.cjs",
     "prepare:packaged-browser": "node scripts/prepare-browser.js",
     "build:app": "npm run build:app:windows",
     "build:app:windows": "node scripts/assert-target-platform.js windows && npm run build:gui && npm run prepare:packaged-browser && electron-builder --win nsis --x64",
@@ -30,7 +30,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "docker:build": "docker build -t blackbox .",
     "docker:run": "docker run -it --rm -v $(pwd)/downloads:/app/downloads blackbox",
-    "mcp": "node dist/mcp/server.js"
+    "mcp": "node dist/mcp/server.js",
+    "typecheck:renderer": "tsc -p tsconfig.renderer.json"
   },
   "keywords": [
     "blackboard",
@@ -112,6 +113,7 @@
       "node_modules/better-sqlite3/**",
       "node_modules/playwright-core/**"
     ],
+    "afterPack": "./scripts/check-packaged-dependencies.cjs",
     "files": [
       "dist/**",
       "assets/**",

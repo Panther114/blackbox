@@ -93,16 +93,78 @@ function isExternalUrl(url: string, baseUrl: string): boolean {
   }
 }
 
+/** Canonical Blackboard course id, e.g. `_7247_1`. */
+const COURSE_ID_RE = /^_?\d{2,}_\d+$/;
+
+/** Strip anything that is not part of the id itself (`&url=`, `?x=1`, `#hash`). */
+function cleanCourseId(raw: string | null | undefined): string {
+  if (!raw) return '';
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    // Keep the raw value when it is not valid percent-encoding.
+  }
+  return decoded.split('&')[0].split('?')[0].split('#')[0].trim();
+}
+
 /**
  * Extract the Blackboard course id (e.g. `_123456_1`) from a course URL.
- * Uses URL parsing so trailing query parameters are never included in the id.
+ *
+ * Blackboard exposes the same course through several URL shapes:
+ *   - `...?course_id=_7247_1` (content/tool pages)
+ *   - `.../execute/launcher?type=Course&id=_7247_1&url=` (the "My Courses"
+ *     portlet link, which has no `course_id` parameter at all)
+ *   - `.../ultra/courses/_7247_1/outline` (Ultra course paths)
+ *
+ * Course identity matters: the id keys the GUI selection lists (one checkbox
+ * per course), the blocked-course settings and the automation ledger, so an id
+ * shared by several courses would select them all at once. Returns '' only when
+ * the URL holds no id at all; `getCourses()` then derives a unique fallback.
  */
 export function extractCourseId(courseUrl: string): string {
+  if (!courseUrl) return '';
+
+  const candidates: Array<string | null> = [];
+  let parsedPath = '';
+  let decodedUrl = courseUrl;
   try {
-    return new URL(courseUrl).searchParams.get('course_id') || '';
+    const parsed = new URL(courseUrl);
+    candidates.push(
+      parsed.searchParams.get('course_id'),
+      parsed.searchParams.get('courseId'),
+      // `?type=Course&id=_7247_1&url=` — the launcher also uses `id` for
+      // non-course tools, so the value is validated below.
+      parsed.searchParams.get('id'),
+    );
+    parsedPath = parsed.pathname;
   } catch {
-    return '';
+    // Malformed URL: fall back to a plain string scan below.
   }
+
+  try {
+    decodedUrl = decodeURIComponent(courseUrl);
+  } catch {
+    // Keep the original string when it is not valid percent-encoding.
+  }
+
+  candidates.push(
+    decodedUrl.match(/[?&](?:course_id|courseId)=([^&]+)/)?.[1] ?? null,
+    decodedUrl.match(/[?&]id=([^&]+)/)?.[1] ?? null,
+  );
+
+  for (const candidate of candidates) {
+    const id = cleanCourseId(candidate);
+    if (COURSE_ID_RE.test(id)) return id;
+    // Not an id, but still a usable non-empty key (e.g. Blackboard Ultra
+    // handles such as `_abcd1234_1` abbreviated differently).
+    if (id && /^_[\w.-]+_\d+$/.test(id) && !/[=&?]/.test(id)) return id;
+  }
+
+  const pathMatch = parsedPath.match(/\/(?:courses?|courseMain)\/(_?[\w.-]+_\d+)/i);
+  if (pathMatch) return cleanCourseId(pathMatch[1]);
+
+  return '';
 }
 
 export function collectDownloadCandidates(
@@ -176,9 +238,16 @@ export class BlackboardScraper {
    * Navigate to a URL with up to `retries` attempts on failure.
    * Uses `domcontentloaded` instead of `networkidle` for speed — Blackboard
    * pages with analytics widgets often never reach networkidle.
+   * A page that is already on the target URL is left alone: re-loading it costs
+   * a full round trip and changes nothing the caller can observe.
    * Returns true on success, false if all attempts fail.
    */
   async navigateTo(url: string, retries = 3): Promise<boolean> {
+    if (this.isOnPage(url)) {
+      log.debug(`Already on ${url} — skipping navigation`);
+      return true;
+    }
+
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         await this.page.goto(url, {
@@ -196,6 +265,21 @@ export class BlackboardScraper {
     }
     log.error(`All navigation attempts failed for ${url}`);
     return false;
+  }
+
+  /**
+   * True when the browser already shows this URL. Compares the path and query
+   * exactly — Blackboard uses both to identify a content folder — while
+   * ignoring the fragment, which never changes what is loaded.
+   */
+  private isOnPage(url: string): boolean {
+    try {
+      const current = new URL(this.page.url());
+      const wanted = new URL(url);
+      return current.origin === wanted.origin && current.pathname === wanted.pathname && current.search === wanted.search;
+    } catch {
+      return false;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -238,6 +322,12 @@ export class BlackboardScraper {
     }
 
     const courses: Course[] = [];
+    // Course ids are the selection key in the GUI (checkbox rows, "include
+    // instructions" picker), the blocked-course settings and the automation
+    // ledger. Duplicate or empty ids make every course share one identity, so
+    // one click selects them all — guarantee a unique, non-empty id per course.
+    const usedIds = new Set<string>();
+
     for (const { href, text } of rawCourses) {
       if (!href || !text) continue;
 
@@ -250,12 +340,22 @@ export class BlackboardScraper {
       const fullUrl = cleanHref.startsWith('http') ? cleanHref : `${this.config.baseUrl}${cleanHref}`;
       const matchedSubjectSignal = LIKELY_SUBJECT_PATTERNS.some(pattern => pattern.test(normalizedName));
 
+      const baseId = extractCourseId(fullUrl) || `url-${contentHash(fullUrl).slice(0, 12)}`;
+      let courseId = baseId;
+      for (let suffix = 2; usedIds.has(courseId); suffix += 1) {
+        courseId = `${baseId}-${suffix}`;
+      }
+      usedIds.add(courseId);
+      if (courseId !== baseId) {
+        log.warn(`Course "${courseName}" resolved to a duplicate id "${baseId}"; using "${courseId}" instead.`);
+      }
+
       log.debug(
-        `Adding course: "${courseName}" -> ${fullUrl} ` +
-          `(subjectSignal=${matchedSubjectSignal ? 'yes' : 'no'})`
+        `Adding course: "${courseName}" -> ${fullUrl} (id=${courseId}, ` +
+          `subjectSignal=${matchedSubjectSignal ? 'yes' : 'no'})`
       );
       courses.push({
-        id: extractCourseId(fullUrl),
+        id: courseId,
         name: courseName,
         url: fullUrl,
         path: sanitizeFilename(courseName),

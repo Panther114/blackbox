@@ -24,6 +24,28 @@ const defaults: DesktopSettings = {
   blockedCourses: [],
 };
 
+/**
+ * Normalize a stored course id so it still matches the id the scraper derives
+ * from a course URL today.
+ *
+ * Releases before 1.1.2 stored whatever followed `course_id=` up to `url=`,
+ * e.g. `_7247_1&url=`. Discovery now yields the clean `_7247_1`, so an
+ * un-normalized entry silently stopped blocking its course. Ids never contain
+ * `&`, `?` or `#`, so everything from those characters on is not part of it.
+ */
+export function normalizeCourseId(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  let decoded = trimmed;
+  try {
+    decoded = decodeURIComponent(trimmed);
+  } catch {
+    // Keep the raw value when it is not valid percent-encoding.
+  }
+  return decoded.split('&')[0].split('?')[0].split('#')[0].trim();
+}
+
 export function normalizeBlockedCourses(value: unknown): BlockedCourse[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -31,7 +53,7 @@ export function normalizeBlockedCourses(value: unknown): BlockedCourse[] {
   for (const candidate of value) {
     if (!candidate || typeof candidate !== 'object') continue;
     const record = candidate as Record<string, unknown>;
-    const id = typeof record.id === 'string' ? record.id.trim() : '';
+    const id = normalizeCourseId(record.id);
     const name = typeof record.name === 'string' ? record.name.trim() : '';
     if (!id || !name || seen.has(id)) continue;
     seen.add(id);

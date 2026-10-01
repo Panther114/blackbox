@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { DownloadLayout } from './types';
 import { sanitizeFilename } from './utils/helpers';
 
 /**
@@ -11,6 +12,121 @@ import { sanitizeFilename } from './utils/helpers';
 export function normalizeDownloadPath(filePath: string): string {
   const resolved = path.resolve(filePath);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * Map a discovered save path to the directory the file is written into for the
+ * requested layout. `hierarchy` keeps the path Blackboard produced
+ * (<downloadDir>/<course>/<section>/<subfolder>); `flat` collapses every file
+ * into its course folder, so a flat run and a hierarchy run share the course
+ * directory without overwriting each other (name clashes are still resolved by
+ * getUniqueFilePath).
+ *
+ * A path that already sits at the course root, or outside the download
+ * directory, is returned unchanged.
+ */
+export function resolveSavePathForLayout(
+  downloadDir: string,
+  savePath: string,
+  layout: DownloadLayout = 'hierarchy',
+): string {
+  if (layout !== 'flat') return savePath;
+
+  const root = path.resolve(downloadDir);
+  const resolved = path.resolve(savePath);
+  const relative = path.relative(root, resolved);
+  const segments =
+    relative && !relative.startsWith('..') && !path.isAbsolute(relative)
+      ? relative.split(path.sep).filter(Boolean)
+      : [];
+
+  if (segments.length <= 1) return savePath;
+  return path.join(root, segments[0]);
+}
+
+/** The course folder a discovered file belongs to (first path segment under downloadDir). */
+export function courseFolderForSavePath(downloadDir: string, savePath: string): string | null {
+  const root = path.resolve(downloadDir);
+  const relative = path.relative(root, path.resolve(savePath));
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  const segments = relative.split(path.sep).filter(Boolean);
+  if (segments.length === 0) return null;
+  return path.join(root, segments[0]);
+}
+
+/**
+ * Name to use inside a flat course folder. The plain name is kept while it is
+ * free; once some other file occupies it, the name is qualified with the
+ * section ("Lecture.pdf" -> "Lecture (Week 2).pdf") so two sections never lose
+ * a file to a name clash. The downloader uniquifies any remaining clash.
+ */
+export function preferredFlatFilename(
+  directory: string,
+  filename: string,
+  sectionName?: string,
+  isTaken: (candidate: string) => boolean = candidate => fs.existsSync(candidate),
+): string {
+  if (!isTaken(path.join(directory, filename))) return filename;
+
+  // Guard the raw section: sanitizeFilename substitutes a placeholder for an
+  // empty string, which would turn "Lecture.pdf" into "Lecture (file).pdf".
+  const rawSection = (sectionName || '').trim();
+  if (!rawSection) return filename;
+
+  const section = sanitizeFilename(rawSection).trim();
+  if (!section) return filename;
+
+  const ext = path.extname(filename);
+  const base = path.basename(filename, ext);
+  const candidate = `${base} (${section})${ext}`;
+  if (candidate.length > 180) return filename;
+
+  return candidate;
+}
+
+/**
+ * Remove empty directories below `rootDir` (never the root itself, never files,
+ * never symlinks). Used after a flat download so the folder shells created
+ * during discovery do not survive as an empty hierarchy next to the flat files.
+ */
+export function pruneEmptyDirectories(rootDir: string): number {
+  const root = path.resolve(rootDir);
+  let removed = 0;
+
+  const pruneChildren = (directory: string): boolean => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      // Unreadable directory: treat it as non-empty and keep it.
+      return false;
+    }
+
+    let empty = true;
+    for (const entry of entries) {
+      // a symlink reports isDirectory() === false, so links are never followed.
+      if (!entry.isDirectory()) {
+        empty = false;
+        continue;
+      }
+      const child = path.join(directory, entry.name);
+      if (pruneChildren(child)) {
+        try {
+          fs.rmdirSync(child);
+          removed += 1;
+        } catch {
+          empty = false;
+        }
+      } else {
+        empty = false;
+      }
+    }
+    return empty;
+  };
+
+  if (!fs.existsSync(root)) return 0;
+  pruneChildren(root);
+  return removed;
 }
 
 /**

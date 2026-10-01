@@ -176,13 +176,13 @@ export class AutomationRunLog {
     }
   }
 
-  async finish(error?: string): Promise<AutomationRunLogPaths> {
+  async finish(error?: string, cancelled = false): Promise<AutomationRunLogPaths> {
     this.update(state => {
       state.running = false;
       if (error) state.error = error;
       for (const entry of state.gnumbers) {
         if (entry.status === 'pending' || entry.status === 'logging-in' || entry.status === 'discovering' || entry.status === 'downloading') {
-          entry.status = error ? 'failed' : 'done';
+          entry.status = cancelled ? 'cancelled' : error ? 'failed' : 'done';
           entry.finishedAt = entry.finishedAt || new Date().toISOString();
         }
       }

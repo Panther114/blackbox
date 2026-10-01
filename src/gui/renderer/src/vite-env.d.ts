@@ -26,7 +26,9 @@ declare global {
           fileType?: string;
         }>,
         instructionCourses?: Array<{ id: string; name: string; url: string; path: string }>,
+        layout?: 'hierarchy' | 'flat',
       ) => Promise<Record<string, unknown>>;
+      cancelDownload: () => Promise<{ cancelled: boolean; running: boolean }>;
       cleanupWorkflow: () => Promise<{ ok: boolean }>;
       getPaths: () => Promise<{ downloads: string; logs: string; summary: string }>;
       openDownloads: () => Promise<string>;
@@ -47,6 +49,8 @@ declare global {
       chooseAutomationDirectory: () => Promise<string | null>;
       openAutomationDirectory: () => Promise<string>;
       startAutomationRun: () => Promise<Record<string, unknown>>;
+      cancelAutomationRun: () => Promise<{ cancelled: boolean; running: boolean }>;
+      clearAutomationDownloads: () => Promise<{ removed: number; directory: string }>;
       onWorkflowEvent: (handler: (event: { type: string; payload: unknown }) => void) => () => void;
     };
   }

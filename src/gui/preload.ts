@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { Course, DiscoveredFile } from '../types';
+import { Course, DiscoveredFile, DownloadLayout } from '../types';
 
 type WorkflowEvent = { type: string; payload: unknown };
 
@@ -17,8 +17,9 @@ const api = {
     ipcRenderer.invoke('workflow:discover-courses', payload || {}),
   discoverFiles: (courses: Course[]): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('workflow:discover-files', { courses }),
-  downloadFiles: (files: DiscoveredFile[], instructionCourses: Course[] = []): Promise<Record<string, unknown>> =>
-    ipcRenderer.invoke('workflow:download', { files, instructionCourses }),
+  downloadFiles: (files: DiscoveredFile[], instructionCourses: Course[] = [], layout: DownloadLayout = 'hierarchy'): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('workflow:download', { files, instructionCourses, layout }),
+  cancelDownload: (): Promise<{ cancelled: boolean; running: boolean }> => ipcRenderer.invoke('workflow:cancel-download'),
   cleanupWorkflow: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('workflow:cleanup'),
   getPaths: (): Promise<{ downloads: string; logs: string; summary: string }> =>
     ipcRenderer.invoke('paths:get'),
@@ -45,6 +46,8 @@ const api = {
   chooseAutomationDirectory: (): Promise<string | null> => ipcRenderer.invoke('automation:choose-directory'),
   openAutomationDirectory: (): Promise<string> => ipcRenderer.invoke('automation:open-directory'),
   startAutomationRun: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('automation:start-run'),
+  cancelAutomationRun: (): Promise<{ cancelled: boolean; running: boolean }> => ipcRenderer.invoke('automation:cancel-run'),
+  clearAutomationDownloads: (): Promise<{ removed: number; directory: string }> => ipcRenderer.invoke('automation:clear-downloads'),
   onWorkflowEvent: (handler: (event: WorkflowEvent) => void): (() => void) => {
     const listener = (_: unknown, evt: WorkflowEvent) => handler(evt);
     ipcRenderer.on('workflow:event', listener);

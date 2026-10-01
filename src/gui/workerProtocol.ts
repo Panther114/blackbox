@@ -1,4 +1,4 @@
-import { Course, DiscoveredFile } from '../types';
+import { Course, DiscoveredFile, DownloadLayout, ExistingFileState } from '../types';
 import { WorkflowSummary } from '../workflow/types';
 import { AutomationRunSummary, AutomationSettings } from '../automation/types';
 
@@ -7,7 +7,9 @@ export type WorkerCommandType =
   | 'discoverCourses'
   | 'discoverFiles'
   | 'download'
+  | 'downloadCancel'
   | 'automationRun'
+  | 'automationCancel'
   | 'cleanup'
   | 'shutdown';
 
@@ -28,10 +30,15 @@ export interface WorkerCommandMap {
   download: {
     files: DiscoveredFile[];
     instructionCourses?: Course[];
+    /** Folder structure for the downloaded files. Defaults to 'hierarchy'. */
+    layout?: DownloadLayout;
   };
+  downloadCancel: Record<string, never>;
   automationRun: {
     settings: AutomationSettings;
+    normalDownloadDir?: string;
   };
+  automationCancel: Record<string, never>;
   cleanup: Record<string, never>;
   shutdown: Record<string, never>;
 }
@@ -44,9 +51,13 @@ export interface WorkerResponseMap {
     enriched: DiscoveredFile[];
     files: DiscoveredFile[];
     skippedOnDisk: number;
+    /** Per-URL, per-layout "already on disk" state. */
+    existing: Record<string, ExistingFileState>;
   };
   download: WorkflowSummary;
+  downloadCancel: { cancelled: boolean; running: boolean };
   automationRun: AutomationRunSummary;
+  automationCancel: { cancelled: boolean; running: boolean };
   cleanup: { ok: true };
   shutdown: { ok: true };
 }

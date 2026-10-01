@@ -86,6 +86,11 @@ export function releaseReservedPath(filePath: string): void {
   reservedPaths.delete(filePath);
 }
 
+/** True while another in-flight download holds this path via getUniqueFilePath. */
+export function isPathReserved(filePath: string): boolean {
+  return reservedPaths.has(filePath);
+}
+
 /**
  * Return a temporary file path for an in-progress download.
  * Uses a random suffix so concurrent downloads of files with the same

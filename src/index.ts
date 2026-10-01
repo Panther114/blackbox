@@ -7,6 +7,8 @@ import {
   Course,
   DiscoveredFile,
   DownloadableFile,
+  DownloadLayout,
+  ExistingFileState,
   FileTree,
   InstructionDiscoveryProgress,
 } from './types';
@@ -16,7 +18,7 @@ import { FileDownloader } from './downloader';
 import { DownloadDatabase } from './database';
 import { initLogger, log } from './utils/logger';
 import { ensureDirectory, sanitizeFilename } from './utils/helpers';
-import { loadFileTree, saveFileTree, buildFileTreeFromDisk } from './fileTree';
+import { loadFileTree, saveFileTree, buildFileTreeFromDisk, flushFileTreeSave } from './fileTree';
 import { stableId } from './agent/markdown';
 
 /** Maximum folder-nesting depth before recursion is aborted. */
@@ -191,9 +193,9 @@ export class BlackboxDownloader extends EventEmitter {
           allFiles.push(...sectionFiles);
         }
 
-        // Return to home between courses
-        await this.scraper.returnToHome();
-
+        // No "return home" here: the next course (and the instructions pass)
+        // navigates straight to its own URL, so the extra portal page load was
+        // pure overhead.
         log.info(`✓ Finished discovering course: ${course.name}`);
       } catch (error: any) {
         log.error(`Failed to discover course ${course.name}: ${error.message}`);
@@ -235,7 +237,8 @@ export class BlackboxDownloader extends EventEmitter {
           items.push(...found.items);
           files.push(...found.files);
         }
-        await this.scraper.returnToHome();
+        // The portal page is not needed here: the next course navigates to its
+        // own URL, so "return to home" was an extra page load per course.
       } catch (error) {
         warnings.push(`Could not scan ${course.name}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -310,7 +313,6 @@ export class BlackboxDownloader extends EventEmitter {
             itemsFound: items.length,
           });
         }
-        await this.scraper.returnToHome();
       } catch (error) {
         warnings.push(`Could not scan ${course.name}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -361,7 +363,8 @@ export class BlackboxDownloader extends EventEmitter {
       const nested = await this.discoverContentFolder(course, sectionName, [...folderPath, folder.name], includeInstructions, includeFiles, depth + 1);
       items.push(...nested.items);
       files.push(...nested.files);
-      await this.scraper.goBack();
+      // The sibling URLs are already collected, so there is nothing to go back
+      // to: the next iteration navigates to its own folder URL.
     }
     return { items, files };
   }
@@ -430,8 +433,8 @@ export class BlackboxDownloader extends EventEmitter {
       const subFiles = await this.discoverFolder(subfolderPath, courseName, sectionName, depth + 1);
       discovered.push(...subFiles);
 
-      // Navigate back after processing the subfolder
-      await this.scraper.goBack();
+      // Every subfolder URL was collected up front, so the traversal does not
+      // need a browser "back" (a full page load) between siblings.
     }
 
     return discovered;
@@ -453,10 +456,42 @@ export class BlackboxDownloader extends EventEmitter {
   }
 
   /**
+   * Cancel the running download: queued files are dropped and in-flight
+   * transfers are aborted. Files already saved are kept on disk.
+   */
+  cancel(): void {
+    this.downloader?.cancel();
+  }
+
+  /** True once cancel() was requested for the current run. */
+  isCancelled(): boolean {
+    return Boolean(this.downloader?.isCancelled());
+  }
+
+  /**
+   * Report which layouts already hold a copy of each discovered file, so the
+   * selection screen can mark or hide them per layout instead of sharing one
+   * "already downloaded" flag.
+   */
+  inspectExisting(files: DiscoveredFile[]): Record<string, ExistingFileState> {
+    if (!this.downloader) {
+      throw new Error('Not initialized. Call initialize() first.');
+    }
+    return this.downloader.inspectExisting(files);
+  }
+
+  /**
    * Download only the files the user selected in the GUI.
    * Returns a per-URL outcome map so callers can report accurate statuses.
+   *
+   * `layout` picks the on-disk structure: `hierarchy` (default) mirrors the
+   * Blackboard course / section / folder tree, `flat` writes every file into
+   * its course folder. Both layouts can coexist side by side.
    */
-  async downloadSelected(files: DiscoveredFile[]): Promise<Record<string, { status: string; error?: string }>> {
+  async downloadSelected(
+    files: DiscoveredFile[],
+    layout: DownloadLayout = 'hierarchy',
+  ): Promise<Record<string, { status: string; error?: string }>> {
     if (!this.downloader) {
       throw new Error('Not initialized. Call initialize() first.');
     }
@@ -466,7 +501,7 @@ export class BlackboxDownloader extends EventEmitter {
       return {};
     }
 
-    const outcomes = await this.downloader.downloadSelected(files);
+    const outcomes = await this.downloader.downloadSelected(files, layout);
     this.printStats();
     return outcomes;
   }
@@ -530,6 +565,8 @@ export class BlackboxDownloader extends EventEmitter {
   async cleanup(): Promise<void> {
     await this.auth.close();
     this.db.close();
+    // Persist any coalesced file-tree update before the process winds down.
+    flushFileTreeSave();
     log.info('Cleanup complete');
   }
 }

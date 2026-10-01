@@ -29,6 +29,31 @@ export interface DownloadableFile {
   mimeType?: string;
   status: 'pending' | 'downloading' | 'completed' | 'failed';
   error?: string;
+  /** Course display name; kept as metadata when the flat layout drops the path segments. */
+  courseName?: string;
+  /** Section display name; kept as metadata when the flat layout drops the path segments. */
+  sectionName?: string;
+  /** Layout this file is being downloaded with. Defaults to 'hierarchy'. */
+  layout?: DownloadLayout;
+}
+
+/**
+ * Choose how downloaded files are laid out inside the download directory.
+ * `hierarchy` (default) keeps the Blackboard course / section / folder tree;
+ * `flat` writes every file directly into its course folder.
+ */
+export type DownloadLayout = 'hierarchy' | 'flat';
+
+/**
+ * Which layouts already hold a copy of a discovered file. The two layouts are
+ * tracked separately: a folder-structure download does not satisfy a flat run
+ * (and the other way round), because the copies sit in different folders.
+ */
+export interface ExistingFileState {
+  hierarchy: boolean;
+  flat: boolean;
+  /** Size of the saved copy, when the download database knows it (no HEAD needed). */
+  size?: number;
 }
 
 /**

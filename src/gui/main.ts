@@ -19,11 +19,13 @@ import {
 } from './workerProtocol';
 import { ensureAppPaths, getAppPaths } from '../appPaths';
 import { SecureDesktopStore, normalizeBlockedCourses } from './secureStore';
+import { getDesktopPaths } from './desktopPaths';
 import { checkForUpdates, downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater';
 import { AgentService } from '../agent/service';
 import { DownloadDatabase } from '../database';
 import { clearDownloadDirectory } from '../downloadDirectory';
 import {
+  clearAutomationDownloadDir,
   loadAutomationSettings,
   saveAutomationSettings,
   validateAutomationSettings,
@@ -647,7 +649,14 @@ async function initializeDesktopApp(): Promise<void> {
     return invokeWorkerCommand('download', {
       files: payload?.files || [],
       instructionCourses: payload?.instructionCourses || [],
+      layout: payload?.layout === 'flat' ? 'flat' : 'hierarchy',
     });
+  });
+
+  ipcMain.handle('workflow:cancel-download', async event => {
+    assertTrustedSender(event);
+    if (!worker) return { cancelled: false, running: false };
+    return invokeWorkerCommand('downloadCancel', {});
   });
 
   ipcMain.handle('workflow:cleanup', async event => {
@@ -658,18 +667,12 @@ async function initializeDesktopApp(): Promise<void> {
 
   ipcMain.handle('paths:get', event => {
     assertTrustedSender(event);
-    const config = getConfig();
-    return {
-      downloads: path.resolve(config.downloadDir),
-      logs: path.resolve(path.dirname(config.logFile)),
-      summary: path.join(getAppPaths().logsDir, 'latest-summary.txt'),
-    };
+    return getDesktopPaths(desktopStore.loadSettings(), getAppPaths());
   });
 
   ipcMain.handle('path:open-downloads', async event => {
     assertTrustedSender(event);
-    const config = getConfig();
-    return shell.openPath(path.resolve(config.downloadDir));
+    return shell.openPath(getDesktopPaths(desktopStore.loadSettings(), getAppPaths()).downloads);
   });
 
   ipcMain.handle('path:clear-downloads', async (event, payload) => {
@@ -697,8 +700,7 @@ async function initializeDesktopApp(): Promise<void> {
 
   ipcMain.handle('path:open-logs', async event => {
     assertTrustedSender(event);
-    const config = getConfig();
-    return shell.openPath(path.resolve(path.dirname(config.logFile)));
+    return shell.openPath(getDesktopPaths(desktopStore.loadSettings(), getAppPaths()).logs);
   });
 
   ipcMain.handle('path:choose-download-directory', async event => {
@@ -762,9 +764,24 @@ async function initializeDesktopApp(): Promise<void> {
   ipcMain.handle('automation:start-run', async event => {
     assertTrustedSender(event);
     const settings = loadAutomationSettings();
-    const validation = validateAutomationSettings(settings, desktopStore.loadSettings().downloadDir);
+    const normalDownloadDir = desktopStore.loadSettings().downloadDir;
+    const validation = validateAutomationSettings(settings, normalDownloadDir);
     if (!validation.ok) throw new Error(validation.error);
-    return invokeWorkerCommand('automationRun', { settings });
+    return invokeWorkerCommand('automationRun', { settings, normalDownloadDir });
+  });
+
+  ipcMain.handle('automation:cancel-run', async event => {
+    assertTrustedSender(event);
+    // Cooperative cancel: sessions finish their current step, release their
+    // course claims and shut down. Downloads on disk are never wiped by this.
+    return invokeWorkerCommand('automationCancel', {});
+  });
+
+  ipcMain.handle('automation:clear-downloads', async event => {
+    assertTrustedSender(event);
+    const settings = loadAutomationSettings();
+    const normalDownloadDir = desktopStore.loadSettings().downloadDir;
+    return clearAutomationDownloadDir(settings.downloadDir, normalDownloadDir);
   });
 
   ipcMain.handle('settings:scan-courses', async (event, payload) => {

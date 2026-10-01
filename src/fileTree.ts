@@ -56,6 +56,46 @@ export function saveFileTree(tree: FileTree, filePath: string): void {
   log.debug(`File tree saved to ${filePath}`);
 }
 
+/**
+ * Coalesced saving for the download hot path.
+ *
+ * Downloading N files used to serialise N full-tree JSON writes (the cache can
+ * grow to megabytes), which dominated the tail of a large run. The writer below
+ * serialises the tree at most once per window and the caller flushes it when the
+ * batch ends; nothing is lost if the process dies mid-window, because the cache
+ * is metadata only and the disk is the source of truth.
+ */
+const SAVE_COALESCE_MS = 1500;
+let pendingSave: { tree: FileTree; filePath: string } | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Queue a tree save, replacing any pending one. Flush with flushFileTreeSave(). */
+export function scheduleFileTreeSave(tree: FileTree, filePath: string): void {
+  pendingSave = { tree, filePath };
+  if (pendingTimer) return;
+  pendingTimer = setTimeout(() => {
+    pendingTimer = null;
+    flushFileTreeSave();
+  }, SAVE_COALESCE_MS);
+  pendingTimer.unref?.();
+}
+
+/** Write any queued tree save immediately. Safe to call when nothing is queued. */
+export function flushFileTreeSave(): void {
+  if (pendingTimer) {
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+  const pending = pendingSave;
+  pendingSave = null;
+  if (!pending) return;
+  try {
+    saveFileTree(pending.tree, pending.filePath);
+  } catch (err: any) {
+    log.warn(`Could not save file tree to ${pending.filePath}: ${err.message}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Lookup / mutation helpers
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import { Config } from '../types';
 import { log } from '../utils/logger';
 import { getBundledChromiumExecutable } from './browserPath';
 import { launchObscuraSession, assertObscuraUsable, ObscuraSession } from './obscura';
+import { installFastResourcePolicy } from './resourcePolicy';
 import {
   archiveCorruptCrashpad,
   archiveFailedBrowserProfile,
@@ -343,6 +344,7 @@ export class BlackboardAuth {
       this.context = session.context;
       this.page = session.page;
       log.info('Browser launched successfully (Obscura backend)');
+      await installFastResourcePolicy(this.context);
       return;
     }
 
@@ -408,6 +410,9 @@ export class BlackboardAuth {
       }
     }
     log.info('Browser launched successfully');
+    // Discovery reads the DOM only: drop images, media, icon fonts and
+    // third-party analytics so every page load is cheaper.
+    await installFastResourcePolicy(this.context);
   }
 
   /**
