@@ -18,3 +18,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run typecheck:renderer
       - run: npm test
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib

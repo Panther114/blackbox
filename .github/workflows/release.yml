@@ -28,16 +28,21 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
       - run: npm test
-      - run: npm run build:app -- --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib
+      - run: npm run tauri:build
       - name: Publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          (cd release && sha256sum Blackbox-*.exe > SHA256SUMS.txt)
-          gh release create "${RELEASE_TAG}" release/Blackbox-*.exe release/Blackbox-*.exe.blockmap release/latest.yml release/SHA256SUMS.txt \
-            --repo "${GITHUB_REPOSITORY}" --verify-tag --title "Blackbox ${RELEASE_TAG}" --generate-notes
+          notes=".github/release-notes/${RELEASE_TAG}.md"
+          test -f "$notes" || { echo "Missing $notes: write the release notes for this version first."; exit 1; }
+          cd src-tauri/target/release/bundle/nsis
+          sha256sum Blackbox_*_x64-setup.exe > SHA256SUMS.txt
+          cd -
+          gh release create "${RELEASE_TAG}" src-tauri/target/release/bundle/nsis/Blackbox_*_x64-setup.exe src-tauri/target/release/bundle/nsis/SHA256SUMS.txt             --repo "${GITHUB_REPOSITORY}" --verify-tag --title "Blackbox ${RELEASE_TAG}" --notes-file "$notes"
