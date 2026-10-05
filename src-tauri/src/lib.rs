@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+mod blackboard;
+mod downloader;
 mod export;
 mod files;
 mod markdown;
