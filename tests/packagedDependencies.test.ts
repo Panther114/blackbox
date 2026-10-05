@@ -46,18 +46,9 @@ function makeFixture() {
   writePackage(appRoot, 'buffer', {});
 
   const unpackedModules = path.join(resourcesDir, 'app.asar.unpacked', 'node_modules');
-  const sqliteRoot = path.join(unpackedModules, 'better-sqlite3');
-  fs.mkdirSync(path.join(sqliteRoot, 'build', 'Release'), { recursive: true });
-  writeJson(path.join(sqliteRoot, 'package.json'), { name: 'better-sqlite3', version: '1.0.0' });
-  fs.writeFileSync(path.join(sqliteRoot, 'build', 'Release', 'better_sqlite3.node'), 'native');
   const playwrightRoot = path.join(unpackedModules, 'playwright-core');
   fs.mkdirSync(playwrightRoot, { recursive: true });
   writeJson(path.join(playwrightRoot, 'package.json'), { name: 'playwright-core', version: '1.0.0' });
-
-  const chromiumRoot = path.join(resourcesDir, 'playwright-browsers', 'chromium-123');
-  fs.mkdirSync(path.join(chromiumRoot, 'chrome-linux64'), { recursive: true });
-  fs.writeFileSync(path.join(chromiumRoot, 'INSTALLATION_COMPLETE'), 'ok');
-  fs.writeFileSync(path.join(chromiumRoot, 'chrome-linux64', 'chrome'), 'browser');
 
   return { root, appRoot, resourcesDir };
 }
@@ -74,12 +65,7 @@ describe('packaged dependency validator', () => {
   });
 
   it('accepts a complete scoped and nested dependency closure and required packaged files', () => {
-    expect(validatePackagedApp({ ...fixture, platformName: 'linux' })).toEqual([]);
-  });
-
-  it('accepts Windows packaging without Chromium because Windows uses system Edge', () => {
-    fs.rmSync(path.join(fixture.resourcesDir, 'playwright-browsers'), { recursive: true, force: true });
-    expect(validatePackagedApp({ ...fixture, platformName: 'win32' })).toEqual([]);
+    expect(validatePackagedApp(fixture)).toEqual([]);
   });
 
   it('resolves dependencies when the extracted app root is reached through a path alias', () => {
@@ -93,14 +79,12 @@ describe('packaged dependency validator', () => {
     fs.rmSync(path.join(fixture.appRoot, 'node_modules', 'leaf-package'), { recursive: true, force: true });
     fs.rmSync(path.join(fixture.appRoot, 'node_modules', 'buffer'), { recursive: true, force: true });
     fs.rmSync(path.join(fixture.appRoot, 'dist/gui/worker.js'));
-    fs.rmSync(path.join(fixture.resourcesDir, 'app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node'));
-    fs.rmSync(path.join(fixture.resourcesDir, 'playwright-browsers'), { recursive: true, force: true });
+    fs.rmSync(path.join(fixture.resourcesDir, 'app.asar.unpacked/node_modules/playwright-core'), { recursive: true, force: true });
 
-    const errors = validatePackagedApp({ ...fixture, platformName: 'linux' });
+    const errors = validatePackagedApp(fixture);
     expect(errors).toContain('nested-package@1.0.0 requires missing package "leaf-package"');
     expect(errors).toContain('application requires missing package "buffer"');
     expect(errors).toContain('packaged app is missing dist/gui/worker.js');
-    expect(errors).toContain('native better-sqlite3 addon for linux-x64 is missing from app.asar.unpacked');
-    expect(errors).toContain('packaged Chromium browser is missing or incomplete');
+    expect(errors).toContain('playwright-core is missing from app.asar.unpacked');
   });
 });

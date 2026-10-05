@@ -3,7 +3,6 @@ import { chromium, firefox, webkit, Browser, BrowserContext, Page } from 'playwr
 import { Config } from '../types';
 import { log } from '../utils/logger';
 import { getBundledChromiumExecutable } from './browserPath';
-import { launchObscuraSession, assertObscuraUsable, ObscuraSession } from './obscura';
 import { installFastResourcePolicy } from './resourcePolicy';
 import {
   archiveCorruptCrashpad,
@@ -105,7 +104,6 @@ export class BlackboardAuth {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private config: Config;
-  private obscuraSession: ObscuraSession | null = null;
 
   constructor(config: Config) {
     this.config = config;
@@ -165,15 +163,6 @@ export class BlackboardAuth {
       await this.browser?.close();
     } catch {
       // The failed launch may already have closed its browser.
-    }
-    if (this.obscuraSession) {
-      const session = this.obscuraSession;
-      this.obscuraSession = null;
-      try {
-        if (session.serve.child && !session.serve.child.killed) session.serve.child.kill();
-      } catch {
-        // The serve process may already have exited.
-      }
     }
     this.browser = null;
     this.context = null;
@@ -329,24 +318,6 @@ export class BlackboardAuth {
   async launchBrowser(): Promise<void> {
     log.info(`Launching ${this.config.browserType} browser...`);
     log.debug(`Browser options: headless=${this.config.headless}, timeout=${this.config.browserTimeout}ms`);
-
-    // Obscura is an optional Rust headless engine driven over CDP. It is a
-    // testing backend for headless discovery/extraction; visible logins and
-    // persistent-profile flows must use the Chromium backends below.
-    if (this.config.browserBackend === 'obscura') {
-      if (this.config.browserType !== 'chromium') {
-        throw new Error('The Obscura backend only supports the chromium browser type.');
-      }
-      assertObscuraUsable(this.config);
-      const session = await launchObscuraSession(this.config, this.config.obscuraPort || 9223);
-      this.obscuraSession = session;
-      this.browser = session.browser;
-      this.context = session.context;
-      this.page = session.page;
-      log.info('Browser launched successfully (Obscura backend)');
-      await installFastResourcePolicy(this.context);
-      return;
-    }
 
     const browserType = {
       chromium,
@@ -569,8 +540,6 @@ export class BlackboardAuth {
    * Close browser
    */
   async close(): Promise<void> {
-    const obscura = this.obscuraSession;
-    this.obscuraSession = null;
     const browser = this.browser;
     const context = this.context;
 
@@ -583,13 +552,9 @@ export class BlackboardAuth {
     }
 
     try {
-      if (obscura) {
-        // Closing the Obscura session also terminates the serve process.
-        await obscura.close();
-        log.info('Browser closed (Obscura backend)');
-      } else if (browser) await browser.close();
+      if (browser) await browser.close();
       else if (context) await context.close();
-      if (!obscura && (browser || context)) log.info('Browser closed');
+      if (browser || context) log.info('Browser closed');
     } catch (error) {
       log.warn(`Browser cleanup did not complete: ${errorMessage(error)}`);
     } finally {

@@ -83,19 +83,6 @@ if (!hasSingleInstanceLock) {
   });
 }
 
-function startPackagedMcpServer(): void {
-  const serverPath = path.resolve(__dirname, '..', 'mcp', 'server.js');
-  const child = spawn(process.execPath, [serverPath], {
-    stdio: 'inherit',
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-  });
-  child.once('error', error => {
-    console.error('Failed to start the MCP server:', error);
-    app.exit(1);
-  });
-  child.once('exit', code => app.exit(code || 0));
-}
-
 const pendingWorkerRequests = new Map<
   string,
   {
@@ -520,10 +507,6 @@ async function initializeDesktopApp(): Promise<void> {
     await desktopStore.applyToEnvironment();
   } catch (error) {
     recordStartupFailure(error);
-  }
-  if (process.argv.includes('--mcp')) {
-    startPackagedMcpServer();
-    return;
   }
   createWindow();
   if (legacyBrowserProfileSource) {

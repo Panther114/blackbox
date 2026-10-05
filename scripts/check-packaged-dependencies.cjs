@@ -128,44 +128,7 @@ function checkDependencyClosure(appRoot) {
   return errors;
 }
 
-function platformBrowserCandidates(platformName, browserDirectory) {
-  if (platformName === 'win32') {
-    return [
-      'chrome-win64/chrome.exe',
-      'chrome-win/chrome.exe',
-    ];
-  }
-  if (platformName === 'darwin') {
-    return [
-      'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-      'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-      'chrome-mac-x64/Chromium.app/Contents/MacOS/Chromium',
-      'chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium',
-      'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-      'chrome-mac/Chromium.app/Contents/MacOS/Chromium',
-    ];
-  }
-  return ['chrome-linux64/chrome', 'chrome-linux/chrome'];
-}
-
-function archLabel(arch) {
-  if (typeof arch === 'string') return arch;
-  if (Number.isInteger(arch)) return ['ia32', 'x64', 'armv7l', 'arm64', 'universal'][arch] || process.arch;
-  return process.arch;
-}
-
-function nativeAddonExists(packageRoot, platformName, arch) {
-  const archName = archLabel(arch);
-  const expected = archName === 'universal'
-    ? ['x64', 'arm64']
-    : [archName];
-  return (
-    exists(path.join(packageRoot, 'build', 'Release', 'better_sqlite3.node')) ||
-    expected.some((candidate) => exists(path.join(packageRoot, 'prebuilds', `${platformName}-${candidate}.node`)))
-  );
-}
-
-function validatePackagedApp({ appRoot, resourcesDir, platformName = process.platform, arch }) {
+function validatePackagedApp({ appRoot, resourcesDir }) {
   const errors = [];
   const appManifestPath = path.join(appRoot, 'package.json');
   if (!exists(appManifestPath)) return ['packaged app is missing package.json'];
@@ -183,39 +146,11 @@ function validatePackagedApp({ appRoot, resourcesDir, platformName = process.pla
 
   errors.push(...checkDependencyClosure(appRoot));
 
-  const unpackedModules = path.join(resourcesDir, 'app.asar.unpacked', 'node_modules');
-  const sqlitePackage = path.join(unpackedModules, 'better-sqlite3');
-  if (!exists(path.join(sqlitePackage, 'package.json'))) {
-    errors.push('native better-sqlite3 package is missing from app.asar.unpacked');
-  } else if (!nativeAddonExists(sqlitePackage, platformName, arch)) {
-    errors.push(`native better-sqlite3 addon for ${platformName}-${archLabel(arch)} is missing from app.asar.unpacked`);
-  }
-  if (!exists(path.join(unpackedModules, 'playwright-core', 'package.json'))) {
+  // Windows drives the installed Microsoft Edge, so only Playwright's driver
+  // needs to live outside the archive.
+  if (!exists(path.join(resourcesDir, 'app.asar.unpacked', 'node_modules', 'playwright-core', 'package.json'))) {
     errors.push('playwright-core is missing from app.asar.unpacked');
   }
-
-  const browserRoot = path.join(resourcesDir, 'playwright-browsers');
-  let browserFound = false;
-  if (exists(browserRoot)) {
-    const candidates = platformBrowserCandidates(platformName, browserRoot);
-    for (const entry of fs.readdirSync(browserRoot, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const buildRoot = path.join(browserRoot, entry.name);
-      if (
-        exists(path.join(buildRoot, 'INSTALLATION_COMPLETE')) &&
-        candidates.some((candidate) => exists(path.join(buildRoot, candidate)))
-      ) {
-        browserFound = true;
-        break;
-      }
-    }
-  }
-  // Windows uses the system Microsoft Edge installation; bundling another
-  // browser there materially inflates the installer without changing defaults.
-  if (!browserFound && platformName !== 'win32') {
-    errors.push('packaged Chromium browser is missing or incomplete');
-  }
-
   return errors;
 }
 
@@ -272,9 +207,7 @@ function removeTemporaryDirectory(directory) {
 }
 
 async function afterPack(context) {
-  const resourcesDir = context.electronPlatformName === 'darwin'
-    ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
-    : path.join(context.appOutDir, 'resources');
+  const resourcesDir = path.join(context.appOutDir, 'resources');
   const archivePath = path.join(resourcesDir, 'app.asar');
   if (!exists(archivePath)) throw new Error(`Packaged application archive is missing: ${archivePath}`);
 
@@ -284,7 +217,7 @@ async function afterPack(context) {
   try {
     asar.extractAll(archivePath, appRoot);
     copyOverlay(path.join(resourcesDir, 'app.asar.unpacked'), appRoot);
-    const errors = validatePackagedApp({ appRoot, resourcesDir, platformName: context.electronPlatformName, arch: context.arch });
+    const errors = validatePackagedApp({ appRoot, resourcesDir });
     if (errors.length) throw new Error(`Packaged application validation failed:\n- ${errors.join('\n- ')}`);
     console.log('[packaged-dependencies] Runtime dependency closure and packaged resources verified.');
   } finally {
@@ -297,5 +230,4 @@ module.exports.afterPack = afterPack;
 module.exports.validatePackagedApp = validatePackagedApp;
 module.exports.checkDependencyClosure = checkDependencyClosure;
 module.exports.copyOverlay = copyOverlay;
-module.exports.nativeAddonExists = nativeAddonExists;
 module.exports.removeTemporaryDirectory = removeTemporaryDirectory;
