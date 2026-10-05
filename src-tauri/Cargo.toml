@@ -28,6 +28,7 @@ futures-util = "0.3.34"
 tokio-util = "0.7.19"
 base64 = "0.23.1"
 tauri-plugin-dialog = "2.7.3"
+tauri-plugin-single-instance = "2"
 
 [dev-dependencies]
 tempfile = "3"

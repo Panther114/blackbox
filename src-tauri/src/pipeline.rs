@@ -50,6 +50,7 @@ struct Session {
     courses_discovered: usize,
     courses_selected: usize,
     files_discovered: usize,
+    scan_dir: PathBuf,
 }
 
 pub struct Pipeline {
@@ -161,6 +162,7 @@ impl Pipeline {
             courses_discovered: 0,
             courses_selected: 0,
             files_discovered: 0,
+            scan_dir: PathBuf::new(),
         });
         Ok(())
     }
@@ -304,6 +306,7 @@ impl Pipeline {
         if let Some(session) = self.session.lock().await.as_mut() {
             session.files_discovered = discovered.len();
             session.existing = existing.clone();
+            session.scan_dir = download_dir.to_path_buf();
         }
         Ok(json!({ "discovered": discovered, "enriched": enriched, "files": enriched, "skippedOnDisk": any, "existing": existing }))
     }
@@ -313,6 +316,13 @@ impl Pipeline {
     pub async fn download(&self, files: Vec<DiscoveredFile>, instruction_courses: Vec<Course>, layout: DownloadLayout, download_dir: &Path) -> Result<Summary, String> {
         let session = self.session.lock().await.take().ok_or("Workflow not started")?;
         let cancel = self.cancel.lock().unwrap().clone();
+        let download_started = std::time::Instant::now();
+        // The folder can change in Settings between scanning and saving: files go where Settings says now.
+        let files: Vec<DiscoveredFile> = if session.scan_dir.as_os_str().is_empty() || session.scan_dir == download_dir {
+            files
+        } else {
+            files.into_iter().map(|f| DiscoveredFile { save_path: reroot(&session.scan_dir, download_dir, &f.save_path), ..f }).collect()
+        };
         let already_saved = session.existing.values().filter(|s| if layout == DownloadLayout::Flat { s.flat } else { s.hierarchy }).count();
         let mut summary = Summary {
             courses_discovered: session.courses_discovered,
@@ -383,6 +393,8 @@ impl Pipeline {
             }
         }
         summary.cancelled = cancel.is_cancelled();
+        summary.download_dir = download_dir.to_string_lossy().into_owned();
+        summary.duration_ms = download_started.elapsed().as_millis() as u64;
 
         let (started, ended) = (session.started_at.clone(), now_pair().1);
         let _ = write_run_summary(&summary, &started, &ended, &self.paths.log_file, &self.paths.summary_file, download_dir, None);
@@ -493,6 +505,14 @@ impl Pipeline {
     }
 }
 
+/// Move a save path that lives under `from` to the same place under `to`; other paths are left alone.
+pub fn reroot(from: &Path, to: &Path, save_path: &str) -> String {
+    match Path::new(save_path).strip_prefix(from) {
+        Ok(relative) => to.join(relative).to_string_lossy().into_owned(),
+        Err(_) => save_path.to_string(),
+    }
+}
+
 /// A flat run still discovers the folder shells; drop the ones left empty.
 fn prune_flat_leftovers(download_dir: &Path, files: &[DiscoveredFile]) {
     let mut courses = HashSet::new();
@@ -549,10 +569,12 @@ mod tests {
         assert!(downloads.path().join("Mock Course/Course Content/Week 1/Lecture.pdf").exists() || downloads.path().join("Mock Course/Course Content/Lecture.pdf").exists());
         assert!(data.path().join("logs/latest-summary.txt").exists());
         assert!(downloads.path().join("blackbox-run-report.json").exists());
+        {
         let seen = events.lock().unwrap();
         for expected in ["login:start", "login:success", "courses:discovered", "files:ready", "download:complete", "instructions:write:complete", "summary:ready"] {
             assert!(seen.iter().any(|e| e == expected), "missing event {expected}");
         }
+        } // release the event log: the second run emits again
 
         // A second run on the same folder has nothing left to save.
         pipeline.start(&credentials("pw"), data.path()).await.unwrap();
@@ -560,6 +582,13 @@ mod tests {
         let again = pipeline.discover_files(courses, downloads.path()).await.unwrap();
         assert_eq!(again["skippedOnDisk"], 2);
         pipeline.cleanup().await;
+    }
+
+    #[test]
+    fn save_paths_follow_a_changed_download_folder() {
+        let (from, to) = (Path::new("C:/old"), Path::new("D:/new"));
+        assert_eq!(Path::new(&reroot(from, to, "C:/old/Course/Week 1")), Path::new("D:/new/Course/Week 1"));
+        assert_eq!(reroot(from, to, "E:/elsewhere"), "E:/elsewhere");
     }
 
     #[tokio::test]

@@ -20,6 +20,9 @@ use crate::files::{
 };
 use crate::ledger::Ledger;
 use crate::model::{DiscoveredFile, ExistingFileState};
+use crate::transfer::{Kind, TransferTracker};
+
+type Tracker = Arc<Mutex<TransferTracker>>;
 
 pub type Emit = Arc<dyn Fn(&str, Value) + Send + Sync>;
 
@@ -217,22 +220,50 @@ impl Downloader {
             return Vec::new();
         }
         let indexed = Arc::new(scan_download_directory(&self.download_dir));
+        let tracker: Tracker = Arc::new(Mutex::new(TransferTracker::new(files.iter().map(|f| (f.url.clone(), f.name.clone(), f.size)))));
+        let publish = {
+            let (tracker, emit) = (tracker.clone(), self.emit.clone());
+            move || {
+                let snapshot = tracker.lock().unwrap().snapshot(Instant::now());
+                emit("transfer:progress", serde_json::to_value(snapshot).unwrap_or(Value::Null));
+            }
+        };
+        let ticker = {
+            let publish = publish.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_millis(200));
+                loop {
+                    interval.tick().await;
+                    publish();
+                }
+            })
+        };
         let results: Vec<FileResult> = stream::iter(files)
             .map(|file| {
-                let indexed = indexed.clone();
+                let (indexed, tracker) = (indexed.clone(), tracker.clone());
                 async move {
-                    let (outcome, error) = self.download_file(&file, layout, &indexed).await;
+                    let (outcome, error) = self.download_file(&file, layout, &indexed, &tracker).await;
+                    let kind = match outcome {
+                        Outcome::Completed => Kind::Completed,
+                        Outcome::Skipped => Kind::Skipped,
+                        Outcome::Rejected => Kind::Rejected,
+                        Outcome::Failed => Kind::Failed,
+                        Outcome::Cancelled => Kind::Cancelled,
+                    };
+                    tracker.lock().unwrap().settle(&file.url, kind);
                     FileResult { url: file.url.clone(), name: file.name.clone(), outcome, error }
                 }
             })
             .buffer_unordered(self.max_concurrent.max(1))
             .collect()
             .await;
+        ticker.abort();
+        publish();
         let _ = self.ledger.lock().unwrap().save();
         results
     }
 
-    async fn download_file(&self, file: &DiscoveredFile, layout: DownloadLayout, indexed: &HashSet<String>) -> (Outcome, Option<String>) {
+    async fn download_file(&self, file: &DiscoveredFile, layout: DownloadLayout, indexed: &HashSet<String>, tracker: &Tracker) -> (Outcome, Option<String>) {
         if self.cancel.is_cancelled() {
             return (Outcome::Cancelled, None);
         }
@@ -249,7 +280,8 @@ impl Downloader {
         let mut resolved = file.name.clone();
         let mut attempt = 0u32;
         loop {
-            match self.attempt(file, &target_dir, flat, indexed, &mut resolved).await {
+            tracker.lock().unwrap().attempt(&file.url);
+            match self.attempt(file, &target_dir, flat, indexed, &mut resolved, tracker).await {
                 Ok(outcome) => return (outcome, None),
                 Err(DownloadError::Cancelled) => return (Outcome::Cancelled, None),
                 Err(error) => {
@@ -274,7 +306,7 @@ impl Downloader {
     }
 
     /// One attempt. Writes to a hidden `.tmp` file and renames it on success, so a partial file never looks complete.
-    async fn attempt(&self, file: &DiscoveredFile, target_dir: &Path, flat: bool, indexed: &HashSet<String>, resolved: &mut String) -> Result<Outcome, DownloadError> {
+    async fn attempt(&self, file: &DiscoveredFile, target_dir: &Path, flat: bool, indexed: &HashSet<String>, resolved: &mut String, tracker: &Tracker) -> Result<Outcome, DownloadError> {
         let response = tokio::select! {
             result = self.client.get(&file.url).send() => result.map_err(|e| DownloadError::Other(e.to_string()))?,
             _ = self.cancel.cancelled() => return Err(DownloadError::Cancelled),
@@ -312,7 +344,7 @@ impl Downloader {
         *resolved = target_name;
         let tmp_path = tmp_file_path(&final_path);
 
-        let outcome = self.write_body(response, &tmp_path, file, resolved).await;
+        let outcome = self.write_body(response, &tmp_path, file, resolved, tracker).await;
         match outcome {
             Ok(size) => {
                 let renamed = tokio::fs::rename(&tmp_path, &final_path).await.map_err(io_error);
@@ -330,7 +362,7 @@ impl Downloader {
         }
     }
 
-    async fn write_body(&self, response: reqwest::Response, tmp_path: &Path, file: &DiscoveredFile, name: &str) -> Result<u64, DownloadError> {
+    async fn write_body(&self, response: reqwest::Response, tmp_path: &Path, file: &DiscoveredFile, name: &str, tracker: &Tracker) -> Result<u64, DownloadError> {
         let total = response.content_length().unwrap_or(0);
         let mut stream = response.bytes_stream();
         let mut out = tokio::fs::File::create(tmp_path).await.map_err(io_error)?;
@@ -348,6 +380,7 @@ impl Downloader {
             let bytes = chunk.map_err(|e| DownloadError::Other(e.to_string()))?;
             out.write_all(&bytes).await.map_err(io_error)?;
             downloaded += bytes.len() as u64;
+            tracker.lock().unwrap().progress(&file.url, downloaded, Instant::now());
             if last_emit.elapsed() >= PROGRESS_THROTTLE {
                 last_emit = Instant::now();
                 (self.emit)("download:progress", json!({ "url": file.url, "filename": name, "downloaded": downloaded, "total": total }));

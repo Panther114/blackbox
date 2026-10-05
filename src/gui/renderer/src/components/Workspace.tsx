@@ -1,10 +1,11 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { Icon, AppIcon } from './Icons';
 import { WindowControls } from './WindowControls';
+import { isTauri } from '../bridge';
 
 export type WorkspaceView = 'download' | 'automation' | 'agent' | 'settings';
 
-const destinations = [
+const allDestinations = [
   {
     id: 'download' as const,
     label: 'Downloads',
@@ -30,6 +31,9 @@ const destinations = [
     icon: 'sliders' as const,
   },
 ];
+
+// Batch automation has not been ported to the compact (Tauri) build yet; its tab is hidden there.
+const destinations = isTauri ? allDestinations.filter(item => item.id !== 'automation') : allDestinations;
 
 /** One continuous selection underline; measurements are independent of workflow updates. */
 export function WorkspaceNavigation({

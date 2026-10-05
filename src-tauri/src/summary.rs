@@ -32,6 +32,8 @@ pub struct Summary {
     pub instructions_downloaded: usize,
     pub instruction_warnings: Vec<String>,
     pub cancelled: bool,
+    pub download_dir: String,
+    pub duration_ms: u64,
 }
 
 #[derive(Serialize)]
