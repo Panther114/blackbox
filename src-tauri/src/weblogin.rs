@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::blackboard::BASE_URL;
 use crate::pipeline::BrowserLogin;
 
 const LABEL: &str = "signin";
@@ -58,12 +57,12 @@ fn is_session_cookie(name: &str) -> bool {
     lower == "jsessionid" || lower == "s_session_id" || lower == "session_id"
 }
 
-async fn sign_in(app: AppHandle, username: String, password: String, visible: bool) -> Result<Vec<(String, String)>, String> {
+async fn sign_in(app: AppHandle, site: String, username: String, password: String, visible: bool) -> Result<Vec<(String, String)>, String> {
     if let Some(old) = app.get_webview_window(LABEL) {
         let _ = old.close();
     }
-    let login_url = format!("{BASE_URL}/webapps/login/");
-    let base = url::Url::parse(BASE_URL).map_err(|e| e.to_string())?;
+    let login_url = format!("{}/webapps/login/", site.trim_end_matches('/'));
+    let base = url::Url::parse(&site).map_err(|e| e.to_string())?;
     let window = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::External(login_url.parse().map_err(|e: url::ParseError| e.to_string())?))
         .title("Blackbox - Blackboard sign-in")
         .inner_size(960.0, 720.0)
@@ -106,10 +105,10 @@ async fn sign_in(app: AppHandle, username: String, password: String, visible: bo
     result
 }
 
-pub fn browser_login(app: AppHandle) -> BrowserLogin {
+pub fn browser_login(app: AppHandle, site: String) -> BrowserLogin {
     Arc::new(move |username, password, visible| {
-        let app = app.clone();
-        Box::pin(sign_in(app, username, password, visible))
+        let (app, site) = (app.clone(), site.clone());
+        Box::pin(sign_in(app, site, username, password, visible))
     })
 }
 

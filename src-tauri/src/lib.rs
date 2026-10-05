@@ -99,7 +99,7 @@ fn build_core(handle: &AppHandle) -> Arc<Core> {
         }
         let _ = events.emit("workflow:event", json!({ "type": name, "payload": payload }));
     });
-    let pipeline = Arc::new(Pipeline::new(emit.clone(), app_paths(&dir), Some(weblogin::browser_login(handle.clone()))));
+    let pipeline = Arc::new(Pipeline::with_base_url(emit.clone(), app_paths(&dir), Some(weblogin::browser_login(handle.clone(), app::base_url())), &app::base_url()));
     let notifier = handle.clone();
     let updater = Arc::new(Updater::new(&version, Box::new(move |state| {
         let _ = notifier.emit("workflow:event", json!({ "type": "update:state", "payload": state }));

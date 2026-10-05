@@ -36,6 +36,11 @@ fn flag(value: &Value, key: &str) -> Option<bool> {
     value.get(key).and_then(Value::as_bool)
 }
 
+/// Blackboard's address. `BLACKBOX_BASE_URL` exists only so the sign-in can be tested against a local stand-in.
+pub fn base_url() -> String {
+    std::env::var("BLACKBOX_BASE_URL").ok().filter(|v| v.starts_with("http")).unwrap_or_else(|| BASE_URL.to_string())
+}
+
 pub fn home_dir() -> PathBuf {
     PathBuf::from(std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".into()))
 }
@@ -226,7 +231,10 @@ impl Core {
             }
 
             "discoverFiles" => {
-                let courses: Vec<Course> = serde_json::from_value(arg(0).get("courses").cloned().unwrap_or(json!([]))).map_err(|e| e.to_string())?;
+                // The UI passes the course list itself; accept the `{ courses }` form too.
+                let given = arg(0);
+                let list = if given.is_array() { given } else { given.get("courses").cloned().unwrap_or(json!([])) };
+                let courses: Vec<Course> = serde_json::from_value(list).map_err(|e| e.to_string())?;
                 self.pipeline.discover_files(courses, &self.downloads_dir()).await
             }
 
@@ -356,7 +364,7 @@ impl Core {
             let ok = writable(&dir);
             add(if ok { "pass" } else { "fail" }, format!("{label} {} ({})", if ok { "writable" } else { "not writable" }, dir.display()), true, &mut checks);
         }
-        let site = reachable(BASE_URL).await;
+        let site = reachable(&base_url()).await;
         add(if site { "pass" } else { "warn" }, format!("Blackboard {}", if site { "reachable" } else { "unreachable right now" }), false, &mut checks);
 
         if login_test {
@@ -420,7 +428,7 @@ mod tests {
         }
         core.call("workflowStart", &[json!({})]).await.unwrap();
         let courses = core.call("discoverCourses", &[json!({})]).await.unwrap();
-        let scan = core.call("discoverFiles", &[json!({ "courses": courses })]).await.unwrap();
+        let scan = core.call("discoverFiles", &[courses]).await.unwrap();
         // The folder is changed after the scan, before saving.
         core.call("saveSetup", &[json!({ "username": "G1", "downloadDir": second.path() })]).await.unwrap();
         let summary = core.call("downloadFiles", &[scan["files"].clone(), json!([]), json!("hierarchy")]).await.unwrap();
