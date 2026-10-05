@@ -7,6 +7,7 @@ mod files;
 mod markdown;
 mod model;
 mod parse;
+mod pipeline;
 mod ledger;
 mod settings;
 mod summary;
