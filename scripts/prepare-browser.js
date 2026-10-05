@@ -10,6 +10,11 @@ const browserDir = path.join(root, 'build', 'playwright-browsers');
 fs.rmSync(browserDir, { recursive: true, force: true });
 fs.mkdirSync(browserDir, { recursive: true });
 
+if (process.platform === 'win32') {
+  console.log('[prepare-browser] Using installed Microsoft Edge on Windows; no browser is bundled.');
+  process.exit(0);
+}
+
 const browserManifestPath = path.join(root, 'node_modules', 'playwright-core', 'browsers.json');
 const browserManifest = JSON.parse(fs.readFileSync(browserManifestPath, 'utf8'));
 const chromiumRevision = browserManifest.browsers.find((browser) => browser.name === 'chromium')?.revision;
@@ -31,13 +36,6 @@ function defaultPlaywrightCache() {
 }
 
 function platformExecutableCandidates(browserDirectory) {
-  if (process.platform === 'win32') {
-    return [
-      path.join(browserDirectory, 'chrome-win64', 'chrome.exe'),
-      path.join(browserDirectory, 'chrome-win', 'chrome.exe'),
-    ];
-  }
-
   if (process.platform === 'darwin') {
     return [
       path.join(browserDirectory, `chrome-mac-${process.arch}`, 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'),

@@ -1,7 +1,7 @@
 import { getBundledChromiumRelativeCandidates } from '../src/auth/browserPath';
 
 describe('bundled Chromium paths', () => {
-  it('resolves the Windows executable layout', () => {
+  it('resolves the Windows Chromium layout for optional user-installed browsers', () => {
     expect(getBundledChromiumRelativeCandidates('win32', 'x64')).toEqual([
       'chrome-win64/chrome.exe',
       'chrome-win/chrome.exe',

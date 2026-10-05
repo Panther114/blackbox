@@ -77,6 +77,11 @@ describe('packaged dependency validator', () => {
     expect(validatePackagedApp({ ...fixture, platformName: 'linux' })).toEqual([]);
   });
 
+  it('accepts Windows packaging without Chromium because Windows uses system Edge', () => {
+    fs.rmSync(path.join(fixture.resourcesDir, 'playwright-browsers'), { recursive: true, force: true });
+    expect(validatePackagedApp({ ...fixture, platformName: 'win32' })).toEqual([]);
+  });
+
   it('reports missing transitive packages and packaged resources', () => {
     fs.rmSync(path.join(fixture.appRoot, 'node_modules', 'leaf-package'), { recursive: true, force: true });
     fs.rmSync(path.join(fixture.appRoot, 'node_modules', 'buffer'), { recursive: true, force: true });

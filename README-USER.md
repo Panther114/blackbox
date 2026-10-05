@@ -17,7 +17,7 @@ For the simplest setup, download the installer for your platform from [GitHub Re
    - Download folder
 5. Select courses and files in the checkbox screens (TUI) or GUI screens. In the GUI, you can then include all readable instructions and text for selected courses with one checkbox per course.
 
-> The packaged installers include the desktop runtime and automation browser. BlackboardChina itself must still be reachable when you run a real login or download.
+> The packaged installers include the desktop runtime. macOS and Linux include Playwright Chromium; Windows uses Microsoft Edge, which is included with supported Windows editions. BlackboardChina itself must still be reachable when you run a real login or download.
 
 ### Source fallback
 

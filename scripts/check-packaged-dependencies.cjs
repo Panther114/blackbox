@@ -127,7 +127,10 @@ function checkDependencyClosure(appRoot) {
 
 function platformBrowserCandidates(platformName, browserDirectory) {
   if (platformName === 'win32') {
-    return ['chrome-win64/chrome.exe', 'chrome-win/chrome.exe'];
+    return [
+      'chrome-win64/chrome.exe',
+      'chrome-win/chrome.exe',
+    ];
   }
   if (platformName === 'darwin') {
     return [
@@ -204,7 +207,11 @@ function validatePackagedApp({ appRoot, resourcesDir, platformName = process.pla
       }
     }
   }
-  if (!browserFound) errors.push('packaged Chromium browser is missing or incomplete');
+  // Windows uses the system Microsoft Edge installation; bundling another
+  // browser there materially inflates the installer without changing defaults.
+  if (!browserFound && platformName !== 'win32') {
+    errors.push('packaged Chromium browser is missing or incomplete');
+  }
 
   return errors;
 }

@@ -3,8 +3,8 @@ import path from 'path';
 
 /**
  * Resolve Chromium shipped beside the packaged app. The browser is placed in
- * resources/playwright-browsers by the platform release jobs so installed
- * macOS and Linux builds do not depend on a browser-specific system package.
+ * resources/playwright-browsers by the platform release jobs. Windows uses
+ * its installed Microsoft Edge instead of shipping another browser.
  */
 export function getBundledChromiumRelativeCandidates(
   platform: NodeJS.Platform = process.platform,

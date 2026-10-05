@@ -43,6 +43,8 @@ Example shape (Chinese build):
 - Packaging must use the canonical electron-builder pipeline and pass the
   packaged dependency-closure check. Never repair an archive by copying only
   the first missing transitive module. Preserve existing user settings and files.
+- Windows uses installed Microsoft Edge and does not bundle a separate browser;
+  macOS and Linux bundle Playwright Chromium. Keep packaging checks aligned.
 - Folder metadata and folder-opening actions must work before credentials
   are saved; authentication validation belongs to login and download actions.
 - Keep glass planes outside animated opacity/transform ancestors so backdrop blur

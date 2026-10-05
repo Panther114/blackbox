@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - 2026-09-30
+## [1.2.0] - 2026-10-05
 
 ### Fixed
 - Fixed the Windows startup error caused by missing packaged logging dependencies. Builds now verify required application dependencies before creating the installer.
@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redesigned every desktop screen with centered navigation, frosted glass surfaces, a bundled mountain-and-lake background, and clearer typography.
 - Added smooth navigation, screen, control, and dialog transitions with reduced-motion support.
 - Unified hover and press feedback, replaced interface icons with Lucide, and kept download cleanup in Downloads.
+- Reduced the Windows installer size by using installed Microsoft Edge instead of bundling a separate Chromium browser.
 
 ## [1.1.2] - 2026-09-23
 
