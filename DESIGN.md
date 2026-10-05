@@ -1,70 +1,53 @@
 ---
 name: Blackbox
-description: A centered glass workspace for local course materials
+description: A compact, dark, native-glass workspace for local course materials
 colors:
-  canvas: "#dce9f2"
-  ink: "#152c44"
-  ink-soft: "#344e67"
-  primary: "#235ce0"
-  primary-deep: "#174bbf"
-  success: "#316738"
-  warning: "#80531d"
-  error: "#a23e40"
+  canvas: "#101217"
+  ink: "#eef0f6"
+  ink-soft: "#b7bdce"
+  ink-muted: "#858ca1"
+  primary: "#5b8cff"
+  success: "#62d18c"
+  warning: "#f1b65e"
+  error: "#ff8186"
 typography:
-  display:
-    fontFamily: "Gambetta, Georgia, serif"
-    fontSize: "clamp(38px, 4.4vw, 53px)"
-    fontWeight: 400
-    lineHeight: 1.08
-    letterSpacing: "-0.028em"
   body:
-    fontFamily: "Satoshi, Segoe UI, sans-serif"
+    fontFamily: "Satoshi, Segoe UI Variable Text, Segoe UI, sans-serif"
     fontSize: "13px"
     fontWeight: 400
     lineHeight: 1.5
 rounded:
-  control: "7px"
-  surface: "16px"
+  control: "8px"
+  surface: "14px"
 ---
 
 # Blackbox desktop design
 
 ## Overview
 
-The desktop is an operational workspace: course discovery, file selection, saving, automation and local setup retain their current semantics and copy.
+An operational workspace. Density is a feature: the file and course lists get nearly the whole window, and chrome (title bar, steps, options) stays thin.
 
-## Colors
+## Material and color
 
-Pale blue photographic ground, navy text, cobalt actions and labeled green, amber and red outcomes.
+- Windows 11 22H2+ draws a native **Mica** material behind a transparent page; earlier builds get a flat dark ground (`html[data-material]` is set from the main process).
+- Surfaces are 3.5–6% white over the material with a 1px hairline and a top highlight. No `backdrop-filter`, no photographic background: the OS does the glass, so it costs nothing at render time.
+- Cobalt (`#5b8cff`) is the single action color; green, amber and red appear only with labels and icons.
 
 ## Typography
 
-Satoshi controls and tables pair with Gambetta headings. Fonts are locally embedded, unmodified, and distributed with their official ITF FFL licenses.
+Satoshi (variable, bundled with its ITF FFL license) for everything; headings are 600 weight with tight tracking. No serif display face, no runtime font requests.
 
 ## Layout
 
-- Centered brand and four-view navigation above one broad working surface; no left sidebar, including in Settings.
-- A bundled pale alpine lake photograph stays stationary behind frosted glass. Surface gradients use white at 62% opacity to cool white at 40%, with static 22px blur, fine light edges and an offset soft shadow.
-- Navy text (`#152c44`), secondary blue-gray (`#344e67`), cobalt actions (`#235ce0`); green, amber and red communicate outcomes with labels and icons.
-- Satoshi variable font for controls, tables and body copy; Gambetta variable font for headings. Both are unmodified Fontshare fonts, embedded locally with their ITF FFL licenses. The user explicitly replaced the former Bai Jamjuree direction.
-- A 1200px maximum workspace, 16px surface corners, 7px controls, and thin consistent SVG icons. Dense tables scroll inside their surface; long settings screens scroll in the main workspace.
-
-## Elevation & Depth
-
-The photographic background shows through one frosted plane. A static 22px backdrop blur, pale edge highlights and an offset soft shadow define depth. No nested glass cards.
-
-## Shapes
-
-16px surface corners, 7px controls and consistent 1.5px icon strokes. Fine lines separate data rows and related groups.
+- A 44px title bar holds the brand, a four-tab navigation and the status pills; native caption buttons overlay the right edge (`titleBarOverlay`). There is no left sidebar.
+- The page title is screen-reader only (the active tab already names the view).
+- Selection screens: one-line header (title, hint, counts), one options row (course text and download layout), one toolbar row, the table, and a 46px action bar. About ten file rows fit at the 980×680 minimum window.
+- Content is capped at 1480px and scrolls inside its surface.
 
 ## Components
 
-Navigation uses four equal tracks and a transform-driven underline, independent of font measurements. Glass planes remain stationary; their contents enter in 220ms without remounting workflow state or replaying on hidden workflow changes. All button families share 160ms hover/press feedback. Progress fills use transforms. Dialogs use a bounded veil and short depth transition. Reduced motion removes nonessential movement. Interface icons use locally vendored Lucide SVG geometry (1.75px strokes), with pinned source revision and bundled ISC/MIT attribution.
+Segmented controls and the nav indicator are transform-driven. Buttons share 140ms hover/press feedback; progress fills use transforms. Icons are locally vendored Lucide SVGs (1.75px strokes) with the bundled license. Reduced motion removes nonessential movement.
 
 ## Do's and Don'ts
 
-Preserve all product copy, handlers, workflow state, bridge contracts and existing test selectors. Validate 980×680, 1200×820 and 1440×900, plus the actual minimum native window. Background imagery, fonts and licenses must be packaged locally. Rebuild through the canonical pipeline; never hand-edit an archive to replace one missing dependency.
-
-### Reference and implementation
-
-Generated ready, course and settings references live under `.impeccable/mocks/`. The user approved implementation, then requested denser controls, more glass and a premium unique font; those instructions supersede the reference image's density and typography. Final appearance is defined by the rendered application and renderer tokens.
+Preserve product copy, handlers, workflow state, the `window.blackboxGui` bridge and `data-testid` selectors. Validate 980×680, 1120×760 and 1440×900 with a hidden-window capture (`--capture`, see README); never take desktop screenshots. Keep everything local: fonts, icons and imagery are packaged, nothing is requested at runtime.

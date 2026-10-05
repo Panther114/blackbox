@@ -20,11 +20,11 @@ Downloads, Automation, Agent Skills and Settings are the four existing views. Se
 
 ## Capabilities and Constraints
 
-Preserve current behavior, product copy, saved data, the window.blackboxGui bridge, and data-testid selectors. The minimum desktop viewport is 980 × 680. Bundle imagery, licensed Satoshi and Gambetta fonts and icons locally; request no runtime visual assets. Visual changes belong in the renderer. Packaging must contain the full runtime dependency closure. Windows uses the installed Microsoft Edge; macOS and Linux bundle Playwright Chromium.
+Preserve current behavior, product copy, saved data, the window.blackboxGui bridge, and data-testid selectors. The minimum desktop viewport is 980 × 680. Bundle the licensed Satoshi font and icons locally; request no runtime visual assets. Visual changes belong in the renderer. Packaging must contain the full runtime dependency closure. The app targets Windows and uses the installed Microsoft Edge.
 
 ## Brand Commitments
 
-Blackbox retains its name and app icon. The user approved a complete visual replacement: centered top navigation, light frosted glass, a misty lake and mountain background, fine lines, cobalt actions, generous spacing and smooth state transitions.
+Blackbox retains its name and app icon. The current direction is dark, compact and native: Windows 11 Mica material, a thin title bar with tabs, fine lines, cobalt actions and maximum room for data.
 
 ## Product Principles
 

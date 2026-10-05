@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-10-05
+
+### Changed
+- New dark interface with the native Windows 11 Mica material, a thin title bar with tabs and status, and a single typeface. Windows 10 gets a solid dark surface.
+- Denser layouts: the file and course lists get roughly twice the rows (about ten files at the 980x680 minimum window); the page title is now screen-reader only and the options sit on one row.
+- Faster to render and start: no photographic background, no backdrop blur, update checker loaded on demand.
+- The download history is now a small JSON file instead of a SQLite database, removing the native module. Existing downloads on disk are still detected.
+- The installer is Windows-only and about 20% smaller (en-US locales only, unused Chromium components removed, runtime dependencies cut to what the app uses).
+
+### Removed
+- The command-line/terminal interface, MCP server, Docker setup, source launchers, the legacy Python tool, the unused AI module and the Obscura test backend. macOS and Linux packages are no longer built.
+
 ## [1.2.0] - 2026-10-05
 
 ### Fixed

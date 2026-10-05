@@ -335,7 +335,7 @@ export function App() {
   useEffect(() => {
     if (DEMO_MODE) {
       const demoDownloadDir = 'C:\\Users\\demo\\Downloads\\Blackbox';
-      setVersion('1.2.0');
+      setVersion('2.0.0');
       setConfig(previous => ({ ...previous, username: 'g12345678', password: 'blackboard-demo-password', downloadDir: demoDownloadDir, headless: true, autoCheckUpdates: true }));
       setSavedPassword('blackboard-demo-password');
       setPasswordStored(true);

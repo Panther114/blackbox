@@ -27,27 +27,22 @@ Example shape (Chinese build):
 ## Renderer UI
 
 - Keep visual-only changes in `src/gui/renderer/**`; preserve the Electron
-  main/preload/worker interfaces and downloader behavior.
-- Keep the renderer self-contained: Satoshi and Gambetta for the interface, with its
-  font file and license bundled under
-  `src/gui/renderer/src/assets/fonts/`. Do not request fonts at runtime.
-- Use a pale lake-and-mountain canvas, frosted glass surfaces, centered top
-  navigation, cobalt actions, and restrained green status signals. No left
-  sidebar, including in Settings. Keep course/file tables legible and retain existing product
-  copy. Preserve the `window.blackboxGui` bridge and `data-testid` selectors
-  when restructuring presentation.
-- Check desktop layouts at the supported 980×680 minimum window size before
-  packaging.
-- Bundle background imagery locally. Animate scene continuity and navigation
-  selection without remounting workflow state; honor reduced-motion preferences.
-- Packaging must use the canonical electron-builder pipeline and pass the
-  packaged dependency-closure check. Never repair an archive by copying only
-  the first missing transitive module. Preserve existing user settings and files.
-- Windows uses installed Microsoft Edge and does not bundle a separate browser;
-  macOS and Linux bundle Playwright Chromium. Keep packaging checks aligned.
-- Folder metadata and folder-opening actions must work before credentials
-  are saved; authentication validation belongs to login and download actions.
-- Keep glass planes outside animated opacity/transform ancestors so backdrop blur
-  remains stable. Scene identities include only the visible view's state. Use locally
-  vendored Lucide icons and preserve their bundled license. Download cleanup belongs
-  in Downloads, not Settings.
+  main/preload/worker interfaces, the `window.blackboxGui` bridge, existing
+  `data-testid` selectors, product copy and downloader behavior.
+- Design: dark, compact, native Mica glass (see `DESIGN.md`). No left sidebar,
+  no photographic background, no `backdrop-filter`. Satoshi only, bundled with its
+  license under `src/gui/renderer/src/assets/fonts/`; never request fonts or
+  imagery at runtime. Lucide icons are vendored with their license.
+- Check layouts at the supported 980x680 minimum, 1120x760 and 1440x900 before
+  packaging. Capture with the hidden-window flag
+  (`electron dist/gui/main.js --demo --screen=<name> --no-material --capture=<png> --size=WxH`);
+  do not take desktop screenshots or show test windows.
+- Packaging is Windows-only through the canonical electron-builder pipeline and
+  must pass the packaged dependency-closure check (`scripts/after-pack.cjs`).
+  Never repair an archive by copying a single missing module. Preserve existing
+  user settings and files.
+- Windows uses the installed Microsoft Edge through Playwright; no browser is
+  bundled. The download ledger is a JSON file (no native modules).
+- Folder metadata and folder-opening actions must work before credentials are
+  saved; authentication validation belongs to login and download actions.
+- Do not modify `src/automation/**` unless the task is about Automation.
