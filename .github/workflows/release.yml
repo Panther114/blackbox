@@ -40,7 +40,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes=".github/release-notes/${RELEASE_TAG}.md"
+          notes=".github/notes/${RELEASE_TAG}.md"
           test -f "$notes" || { echo "Missing $notes: write the release notes for this version first."; exit 1; }
           cd src-tauri/target/release/bundle/nsis
           sha256sum Blackbox_*_x64-setup.exe > SHA256SUMS.txt
