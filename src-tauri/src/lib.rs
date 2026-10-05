@@ -1,3 +1,11 @@
+#![allow(dead_code)]
+
+mod export;
+mod files;
+mod markdown;
+mod model;
+mod timeutil;
+
 use serde_json::{json, Value};
 use tauri::window::{Effect, EffectsBuilder};
 use tauri::{Manager, Theme};
