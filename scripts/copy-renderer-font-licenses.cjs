@@ -6,7 +6,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const sourceDirectory = path.join(root, 'src/gui/renderer/src/assets/fonts');
 const destinationDirectory = path.join(root, 'dist/gui/renderer/licenses');
-const licenses = ['FFL-Satoshi.txt', 'FFL-Gambetta.txt'];
+const licenses = ['FFL-Satoshi.txt'];
 
 fs.mkdirSync(destinationDirectory, { recursive: true });
 for (const filename of licenses) {

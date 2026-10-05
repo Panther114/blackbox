@@ -1,7 +1,8 @@
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
-import { app, BrowserWindow, dialog, ipcMain, shell, IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, IpcMainInvokeEvent } from 'electron';
 import { compactConfigOverrides, getConfig } from '../config';
 import { BlackboardAuth } from '../auth';
 import { isBrowserProfileInUse } from '../auth/browserProfile';
@@ -121,14 +122,45 @@ function sendWorkflowEvent(type: string, payload: unknown): void {
   }
 }
 
+/** Windows 11 22H2+ can draw a Mica material behind the window; older builds get a solid surface. */
+function supportsMica(): boolean {
+  return process.platform === 'win32' && Number(os.release().split('.')[2]) >= 22621;
+}
+
+/**
+ * Developer aid: `--capture=<file.png> [--size=WxH]` renders the window once,
+ * saves a screenshot of Blackbox's own page and exits. Used for visual review.
+ */
+function captureForReview(): void {
+  const target = process.argv.find(arg => arg.startsWith('--capture='))?.slice('--capture='.length);
+  const window = mainWindow;
+  if (!target || !window) return;
+  const size = process.argv.find(arg => arg.startsWith('--size='))?.slice('--size='.length).split('x').map(Number);
+  if (size && size.length === 2 && size.every(Number.isFinite)) window.setContentSize(size[0], size[1]);
+  window.webContents.once('did-finish-load', () => {
+    setTimeout(() => {
+      window.webContents
+        .capturePage()
+        .then(image => fs.writeFileSync(target, image.toPNG()))
+        .finally(() => app.exit(0));
+    }, 1600);
+  });
+}
+
 function createWindow(): void {
   const icon = appIconPath();
+  const mica = supportsMica() && !process.argv.includes('--no-material');
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    width: 1120,
+    height: 760,
     minWidth: 980,
     minHeight: 680,
+    show: false,
     title: `Blackbox v${appVersion()}`,
+    backgroundColor: mica ? '#00000000' : '#101216',
+    ...(mica ? { backgroundMaterial: 'mica' as const } : {}),
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#00000000', symbolColor: '#c9cdd8', height: 44 },
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -136,27 +168,31 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      spellcheck: false,
+      backgroundThrottling: !process.argv.some(arg => arg.startsWith('--capture=')),
     },
   });
 
-  if (isDevGui()) {
-    mainWindow.loadURL(`http://127.0.0.1:5173${isDemoGui() ? '/?demo=1' : ''}`);
-  } else {
-    mainWindow.loadFile(path.resolve(__dirname, 'renderer/index.html'), {
-      query: isDemoGui() ? { demo: '1' } : undefined,
-    });
+  const query: Record<string, string> = { material: mica ? 'mica' : 'none' };
+  if (isDemoGui()) {
+    query.demo = '1';
+    const screen = process.argv.find(arg => arg.startsWith('--screen='));
+    if (screen) query.screen = screen.slice('--screen='.length);
   }
+  if (isDevGui()) {
+    mainWindow.loadURL(`http://127.0.0.1:5173/?${new URLSearchParams(query)}`);
+  } else {
+    mainWindow.loadFile(path.resolve(__dirname, 'renderer/index.html'), { query });
+  }
+  // A review capture renders off-screen: the window is never shown or focused.
+  if (!process.argv.some(arg => arg.startsWith('--capture='))) mainWindow.once('ready-to-show', () => mainWindow?.show());
+  captureForReview();
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
 }
 
 function isNativeModuleAbiError(message: string): boolean {
-  return (
-    message.includes('NODE_MODULE_VERSION') ||
-    message.includes('ERR_DLOPEN_FAILED') ||
-    message.includes('better_sqlite3') ||
-    message.includes('better-sqlite3')
-  );
+  return message.includes('NODE_MODULE_VERSION') || message.includes('ERR_DLOPEN_FAILED');
 }
 
 function normalizeWorkerError(message: string, command?: WorkerCommandType): string {
@@ -490,6 +526,7 @@ function scheduleAutoUpdateChecks(enabled: boolean): void {
 
 async function initializeDesktopApp(): Promise<void> {
   app.setAppUserModelId('com.panther114.blackbox');
+  Menu.setApplicationMenu(null);
   const appPaths = ensureAppPaths();
   desktopStore = new SecureDesktopStore(appPaths);
   let legacyBrowserProfileSource: string | undefined;
@@ -801,7 +838,7 @@ async function initializeDesktopApp(): Promise<void> {
   ipcMain.handle('update:get-state', event => { assertTrustedSender(event); return getUpdateState(); });
   ipcMain.handle('update:check', async event => { assertTrustedSender(event); return checkForUpdates(); });
   ipcMain.handle('update:download', async event => { assertTrustedSender(event); await downloadUpdate(); return getUpdateState(); });
-  ipcMain.handle('update:install', event => { assertTrustedSender(event); installUpdate(); return { ok: true }; });
+  ipcMain.handle('update:install', async event => { assertTrustedSender(event); await installUpdate(); return { ok: true }; });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

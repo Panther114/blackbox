@@ -1,7 +1,0 @@
-{
-  "source": "OpenAI image_gen",
-  "created": "2026-09-30",
-  "reference": ".impeccable/mocks/lake-ready.png",
-  "purpose": "Bundled background only; all UI is semantic React and CSS",
-  "conversion": "ffmpeg libwebp, quality 88"
-}

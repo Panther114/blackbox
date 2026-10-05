@@ -1,4 +1,3 @@
-import { autoUpdater } from 'electron-updater';
 import { app } from 'electron';
 
 export type UpdateState = {
@@ -9,9 +8,11 @@ export type UpdateState = {
   message?: string;
 };
 
+type AutoUpdater = typeof import('electron-updater').autoUpdater;
+
 let updateState: UpdateState = { status: 'idle' };
 let notifier: ((state: UpdateState) => void) | null = null;
-let initialized = false;
+let updater: Promise<AutoUpdater> | null = null;
 
 function updateErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -28,17 +29,23 @@ function setState(next: UpdateState): void {
 
 export function initializeUpdater(onChange: (state: UpdateState) => void): void {
   notifier = onChange;
-  if (initialized || !app.isPackaged) return;
-  initialized = true;
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.allowPrerelease = false;
-  autoUpdater.on('checking-for-update', () => setState({ status: 'checking' }));
-  autoUpdater.on('update-available', info => setState({ status: 'available', version: info.version, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined }));
-  autoUpdater.on('update-not-available', () => setState({ status: 'idle', message: 'You are up to date.' }));
-  autoUpdater.on('download-progress', progress => setState({ status: 'downloading', percent: progress.percent }));
-  autoUpdater.on('update-downloaded', info => setState({ status: 'ready', version: info.version, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined }));
-  autoUpdater.on('error', error => setState({ status: 'error', message: updateErrorMessage(error) }));
+}
+
+/** electron-updater is large; it is only loaded the first time an update is requested. */
+function loadUpdater(): Promise<AutoUpdater> {
+  updater ??= import('electron-updater').then(({ autoUpdater }) => {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.allowPrerelease = false;
+    autoUpdater.on('checking-for-update', () => setState({ status: 'checking' }));
+    autoUpdater.on('update-available', info => setState({ status: 'available', version: info.version, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined }));
+    autoUpdater.on('update-not-available', () => setState({ status: 'idle', message: 'You are up to date.' }));
+    autoUpdater.on('download-progress', progress => setState({ status: 'downloading', percent: progress.percent }));
+    autoUpdater.on('update-downloaded', info => setState({ status: 'ready', version: info.version, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined }));
+    autoUpdater.on('error', error => setState({ status: 'error', message: updateErrorMessage(error) }));
+    return autoUpdater;
+  });
+  return updater;
 }
 
 export async function checkForUpdates(): Promise<UpdateState> {
@@ -49,7 +56,7 @@ export async function checkForUpdates(): Promise<UpdateState> {
   }
   setState({ status: 'checking' });
   try {
-    await autoUpdater.checkForUpdates();
+    await (await loadUpdater()).checkForUpdates();
   } catch (error) {
     const state = { status: 'error' as const, message: updateErrorMessage(error) };
     setState(state);
@@ -60,12 +67,12 @@ export async function checkForUpdates(): Promise<UpdateState> {
 
 export async function downloadUpdate(): Promise<void> {
   if (updateState.status !== 'available') throw new Error('No update is ready to download.');
-  await autoUpdater.downloadUpdate();
+  await (await loadUpdater()).downloadUpdate();
 }
 
-export function installUpdate(): void {
+export async function installUpdate(): Promise<void> {
   if (updateState.status !== 'ready') throw new Error('No downloaded update is ready to install.');
-  autoUpdater.quitAndInstall();
+  (await loadUpdater()).quitAndInstall();
 }
 
 export function getUpdateState(): UpdateState { return updateState; }

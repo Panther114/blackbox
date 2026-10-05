@@ -4,44 +4,38 @@
   font-weight: 300 900;
   font-display: swap;
 }
-@font-face {
-  font-family: 'Gambetta';
-  src: url('./assets/fonts/Gambetta-Variable.woff2') format('woff2');
-  font-weight: 300 700;
-  font-display: swap;
-}
 :root {
-  color-scheme: light;
-  --canvas: #dce9f2;
-  --ink: #152c44;
-  --ink-soft: #344e67;
-  --ink-muted: #49647d;
-  --line: rgba(80, 119, 151, 0.22);
-  --line-soft: rgba(80, 119, 151, 0.13);
-  --surface: rgba(249, 253, 255, 0.52);
-  --surface-soft: rgba(230, 240, 250, 0.5);
-  --surface-raised: rgba(255, 255, 255, 0.83);
-  --surface-muted: rgba(220, 233, 244, 0.55);
-  --blue: #235ce0;
-  --blue-strong: #174bbf;
-  --blue-soft: rgba(216, 229, 255, 0.55);
-  --blue-ink: #204cab;
+  color-scheme: dark;
+  --canvas: #101217;
+  --ink: #eef0f6;
+  --ink-soft: #b7bdce;
+  --ink-muted: #858ca1;
+  --line: rgba(255, 255, 255, 0.11);
+  --line-soft: rgba(255, 255, 255, 0.065);
+  --surface: rgba(255, 255, 255, 0.045);
+  --surface-soft: rgba(255, 255, 255, 0.03);
+  --surface-raised: rgba(255, 255, 255, 0.085);
+  --surface-muted: rgba(255, 255, 255, 0.06);
+  --blue: #5b8cff;
+  --blue-strong: #7da3ff;
+  --blue-soft: rgba(91, 140, 255, 0.16);
+  --blue-ink: #a3bcff;
   --cyan: var(--blue);
-  --green: #316738;
-  --green-soft: rgba(226, 242, 225, 0.76);
-  --amber: #80531d;
-  --amber-soft: rgba(251, 239, 215, 0.84);
-  --red: #a23e40;
-  --red-soft: rgba(255, 233, 233, 0.83);
-  --radius-sm: 7px;
+  --green: #62d18c;
+  --green-soft: rgba(98, 209, 140, 0.14);
+  --amber: #f1b65e;
+  --amber-soft: rgba(241, 182, 94, 0.14);
+  --red: #ff8186;
+  --red-soft: rgba(255, 129, 134, 0.14);
+  --radius-sm: 8px;
   --radius: 12px;
-  --radius-lg: 16px;
-  --shadow: 0 18px 48px -20px rgba(22, 58, 91, 0.32);
+  --radius-lg: 14px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 22px 44px -28px rgba(0, 0, 0, 0.75);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-fast: 160ms;
-  --dur: 280ms;
-  --font-ui: 'Satoshi', 'Segoe UI', sans-serif;
-  --font-display: 'Gambetta', Georgia, serif;
+  --dur-fast: 140ms;
+  --dur: 240ms;
+  --font-ui: 'Satoshi', 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
+  --font-display: 'Satoshi', 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
   --font-mono: 'Cascadia Mono', Consolas, monospace;
 }
 * {
@@ -132,46 +126,30 @@ textarea {
   white-space: nowrap;
 }
 
-/* One photographic ground. Dense workflows use a single plane of frosted glass. */
+/* The window material (Mica) shows through; without it a flat dark ground is used. */
+html[data-material='mica'] body {
+  background: transparent;
+}
 .app {
   position: relative;
-  isolation: isolate;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: 100%;
   height: 100dvh;
   overflow: hidden;
 }
-.app::before {
-  position: absolute;
-  inset: 0;
-  z-index: -2;
-  background: url('./assets/lake-background.webp') center 58% / cover no-repeat;
-  content: '';
-}
-.app::after {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    rgba(241, 249, 255, 0.18),
-    rgba(221, 236, 249, 0.04) 60%,
-    rgba(238, 248, 255, 0.16)
-  );
-  content: '';
+html:not([data-material='mica']) .app {
+  background: radial-gradient(900px 420px at 50% -10%, rgba(91, 140, 255, 0.12), transparent 70%), var(--canvas);
 }
 .workspace-header {
   display: flex;
-  min-height: 66px;
+  min-height: 52px;
   align-items: center;
-  justify-content: center;
-  gap: 44px;
-  padding: 0 28px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.57);
-  background: rgba(242, 249, 255, 0.28);
-  backdrop-filter: blur(24px) saturate(1.2);
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 calc(100vw - env(titlebar-area-width, 100vw)) 0 20px;
+  border-bottom: 1px solid var(--line-soft);
+  -webkit-app-region: drag;
 }
 .workspace-brand {
   display: flex;
@@ -180,14 +158,14 @@ textarea {
   white-space: nowrap;
 }
 .workspace-brand .app-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
 }
 .workspace-brand strong {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.025em;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
 }
 .workspace-brand > span {
   display: none;
@@ -196,9 +174,13 @@ textarea {
   position: relative;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  width: 536px;
+  position: absolute;
+  left: 50%;
+  width: 476px;
   align-items: center;
-  height: 66px;
+  height: 52px;
+  transform: translateX(-50%);
+  -webkit-app-region: no-drag;
 }
 .nav-item {
   position: relative;
@@ -206,13 +188,13 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: 44px;
-  padding: 0 14px;
+  height: 36px;
+  padding: 0 12px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
   transition:
     color var(--dur-fast),
@@ -220,14 +202,14 @@ textarea {
     transform var(--dur-fast) var(--ease);
 }
 .nav-item:hover {
-  color: var(--blue-ink);
-  background: rgba(255, 255, 255, 0.35);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
 }
 .nav-item:active {
   transform: translateY(1px);
 }
 .nav-item.is-active {
-  color: var(--blue-ink);
+  color: var(--ink);
 }
 .nav-indicator {
   position: absolute;
@@ -240,9 +222,10 @@ textarea {
 }
 .nav-indicator::after {
   position: absolute;
-  inset: 0 14px;
-  border-radius: 2px;
+  inset: 0 16px;
+  border-radius: 2px 2px 0 0;
   background: var(--blue);
+  box-shadow: 0 0 12px 1px rgba(91, 140, 255, 0.55);
   content: '';
 }
 .workspace-footer {
@@ -253,8 +236,7 @@ textarea {
   gap: 20px;
   padding: 6px 28px;
   color: var(--ink-soft);
-  background: rgba(242, 249, 255, 0.24);
-  border-top: 1px solid rgba(255, 255, 255, 0.38);
+  border-top: 1px solid var(--line-soft);
   font-size: 10px;
 }
 .workspace-footer > div {
@@ -294,16 +276,16 @@ textarea {
   display: flex;
   width: 100%;
   max-width: 1200px;
-  min-height: 74px;
+  min-height: 58px;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   margin: auto;
   gap: 16px;
 }
 .workspace-heading h1 {
   margin: 0;
-  font: 500 31px/1.2 var(--font-display);
-  letter-spacing: -0.025em;
+  font: 600 22px/1.2 var(--font-display);
+  letter-spacing: -0.03em;
 }
 .workspace-status {
   position: absolute;
@@ -343,15 +325,10 @@ textarea {
   flex-direction: column;
   gap: 18px;
   padding: 23px 26px;
-  border: 0;
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius-lg);
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.62), rgba(237, 247, 255, 0.4));
-  backdrop-filter: blur(22px) saturate(1.16);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 1px 0 0 rgba(255, 255, 255, 0.53),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.4),
-    var(--shadow);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), var(--shadow);
 }
 .panel h2,
 .panel h3 {
@@ -375,8 +352,8 @@ textarea {
 .selection-head h2,
 .transfer-head h2 {
   margin: 0;
-  font: 500 24px/1.25 var(--font-display);
-  letter-spacing: -0.018em;
+  font: 600 19px/1.3 var(--font-display);
+  letter-spacing: -0.02em;
 }
 .surface-intro p,
 .selection-head p,
@@ -397,10 +374,10 @@ textarea {
   min-height: 23px;
   padding: 3px 8px;
   border: 1px solid var(--line-soft);
-  border-radius: 5px;
+  border-radius: 999px;
   color: var(--ink-soft);
-  background: rgba(255, 255, 255, 0.35);
-  font-size: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 10.5px;
   font-weight: 500;
   line-height: 1.25;
   white-space: nowrap;
@@ -434,7 +411,7 @@ textarea {
   padding: 11px 14px;
   border-radius: 9px;
   color: var(--blue-ink);
-  background: rgba(236, 245, 255, 0.88);
+  background: var(--blue-soft);
   font-size: 12px;
 }
 .banner-error {
@@ -485,45 +462,45 @@ textarea {
 }
 .btn-primary {
   color: #fff;
-  background-color: #235ce0;
+  background: linear-gradient(180deg, #6b97ff, #4a7cf5);
   box-shadow:
-    0 4px 12px -5px rgba(28, 73, 162, 0.6),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    0 6px 16px -8px rgba(74, 124, 245, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 .btn-primary:hover:not(:disabled) {
   color: #fff;
-  background-color: #174bbf;
-  box-shadow: 0 7px 18px -6px rgba(28, 73, 162, 0.6);
+  background: linear-gradient(180deg, #7ba3ff, #5586fa);
+  box-shadow: 0 8px 20px -8px rgba(74, 124, 245, 1);
   transform: translateY(-1px);
 }
 .btn-secondary,
 .btn-chip {
   color: var(--ink);
-  border-color: rgba(93, 133, 164, 0.26);
-  background: rgba(255, 255, 255, 0.32);
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.05);
 }
 .btn-secondary:hover:not(:disabled),
 .btn-chip:hover:not(:disabled) {
-  border-color: rgba(64, 112, 160, 0.44);
-  background: rgba(255, 255, 255, 0.64);
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.09);
 }
 .btn-ghost {
   color: var(--ink-soft);
   background: transparent;
 }
 .btn-ghost:hover:not(:disabled) {
-  color: var(--blue-ink);
-  background: rgba(255, 255, 255, 0.4);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.07);
 }
 .btn-danger {
   color: var(--red);
-  background: rgba(255, 243, 243, 0.55);
-  border-color: rgba(160, 76, 82, 0.19);
+  background: rgba(255, 129, 134, 0.07);
+  border-color: rgba(255, 129, 134, 0.22);
 }
 .btn-danger:hover:not(:disabled) {
-  color: #852f33;
-  background: rgba(255, 229, 230, 0.86);
-  border-color: rgba(160, 76, 82, 0.35);
+  color: #ffa3a6;
+  background: rgba(255, 129, 134, 0.15);
+  border-color: rgba(255, 129, 134, 0.4);
 }
 .btn-primary:active:not(:disabled),
 .btn-secondary:active:not(:disabled),
@@ -556,7 +533,7 @@ textarea {
 }
 .btn-chip.is-on {
   color: var(--blue-ink);
-  border-color: rgba(35, 92, 224, 0.27);
+  border-color: rgba(91, 140, 255, 0.4);
   background: var(--blue-soft);
 }
 .btn-chip .icon {
@@ -596,8 +573,8 @@ textarea {
 }
 .ready-main h2 {
   margin: 0 0 11px;
-  font: 400 clamp(38px, 4.4vw, 53px)/1.08 var(--font-display);
-  letter-spacing: -0.028em;
+  font: 600 clamp(34px, 4vw, 46px)/1.08 var(--font-display);
+  letter-spacing: -0.035em;
 }
 .ready-main p {
   max-width: 65ch;
@@ -673,7 +650,7 @@ textarea {
   width: 52px;
   height: 52px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.06);
 }
 .launch-orbit .app-icon {
   width: 35px;
@@ -681,7 +658,7 @@ textarea {
 }
 .launch-copy h2 {
   margin: 0 0 7px;
-  font: 500 28px/1.2 var(--font-display);
+  font: 600 24px/1.2 var(--font-display);
 }
 .launch-copy p {
   margin: 0;
@@ -717,7 +694,7 @@ textarea {
   place-items: center;
   border-radius: 50%;
   color: var(--ink-muted);
-  background: rgba(255, 255, 255, 0.47);
+  background: rgba(255, 255, 255, 0.07);
   font-size: 11px;
 }
 .launch-stage.is-current .stage-number {
@@ -787,7 +764,7 @@ textarea {
 .selection-panel,
 .files-panel {
   min-height: 340px;
-  height: calc(100dvh - 224px);
+  height: calc(100dvh - 234px);
   max-height: 850px;
   gap: 10px;
   padding: 18px 22px 0;
@@ -852,10 +829,10 @@ textarea {
   min-width: 0;
   min-height: 36px;
   padding: 8px 11px;
-  border: 1px solid rgba(88, 125, 155, 0.28);
-  border-radius: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.4);
+  background: rgba(0, 0, 0, 0.2);
   font: 400 12px/1.3 var(--font-ui);
   transition:
     border-color var(--dur-fast),
@@ -865,16 +842,16 @@ textarea {
 .search::placeholder,
 .field input::placeholder,
 .automation-gnumber-input::placeholder {
-  color: #536b80;
+  color: var(--ink-muted);
   opacity: 1;
 }
 .search:focus,
 .field input:focus,
 .toolbar select:focus,
 .automation-gnumber-input:focus {
-  border-color: rgba(35, 92, 224, 0.55);
-  background: rgba(255, 255, 255, 0.66);
-  box-shadow: 0 0 0 3px rgba(35, 92, 224, 0.1);
+  border-color: rgba(91, 140, 255, 0.7);
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.18);
   outline: none;
 }
 .toolbar select {
@@ -888,8 +865,8 @@ textarea {
   min-height: 0;
   overflow: auto;
   border: 0;
-  border-top: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.16);
+  border-top: 1px solid var(--line-soft);
+  background: transparent;
   border-radius: 0;
 }
 .selection-panel > .list,
@@ -909,13 +886,13 @@ textarea {
   transition: background-color var(--dur-fast);
 }
 .list-row:hover {
-  background: rgba(255, 255, 255, 0.38);
+  background: rgba(255, 255, 255, 0.05);
 }
 .list-row.is-selected {
-  background: rgba(210, 226, 249, 0.32);
+  background: rgba(91, 140, 255, 0.1);
 }
 .list-row.is-selected:hover {
-  background: rgba(214, 230, 253, 0.62);
+  background: rgba(91, 140, 255, 0.16);
 }
 .list-row input,
 .table-row input,
@@ -963,7 +940,7 @@ textarea {
   z-index: 2;
   min-height: 30px;
   color: var(--ink-soft);
-  background: #e4eef7;
+  background: #181a20;
   border-bottom: 1px solid var(--line);
   font-size: 10px;
   font-weight: 500;
@@ -979,14 +956,14 @@ textarea {
   cursor: pointer;
 }
 .table-row.selectable:hover {
-  background: rgba(255, 255, 255, 0.38);
+  background: rgba(255, 255, 255, 0.045);
 }
 .table-row.selectable.is-on {
-  background: rgba(214, 229, 252, 0.4);
+  background: rgba(91, 140, 255, 0.09);
 }
 .table-row.is-saved {
   color: var(--ink-muted);
-  background: rgba(242, 246, 250, 0.38);
+  background: rgba(255, 255, 255, 0.02);
 }
 .table-row.is-saved .file-name {
   color: var(--ink-muted);
@@ -1029,7 +1006,7 @@ textarea {
   padding: 10px 22px;
   border-top: 1px solid var(--line);
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-  background: rgba(247, 252, 255, 0.27);
+  background: rgba(255, 255, 255, 0.03);
 }
 .action-bar-summary {
   display: grid;
@@ -1108,7 +1085,7 @@ textarea {
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(218, 231, 244, 0.37);
+  background: rgba(0, 0, 0, 0.22);
 }
 .segmented button {
   position: relative;
@@ -1128,7 +1105,8 @@ textarea {
   top: 3px;
   bottom: 3px;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 3px rgba(0, 0, 0, 0.4);
   transition: transform var(--dur) var(--ease);
 }
 .instruction-picker {
@@ -1217,7 +1195,7 @@ textarea {
 }
 .files-panel:has(.instruction-picker.is-open) {
   height: auto;
-  min-height: calc(100dvh - 224px);
+  min-height: calc(100dvh - 234px);
   max-height: none;
 }
 .files-panel:has(.instruction-picker.is-open) > .table {
@@ -1279,7 +1257,7 @@ textarea {
 }
 .settings-tabs button:hover {
   color: var(--blue);
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
 }
 .settings-tabs button.is-active {
   color: var(--blue-ink);
@@ -1382,7 +1360,7 @@ textarea {
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(219, 233, 246, 0.28);
+  background: rgba(0, 0, 0, 0.22);
   cursor: grab;
   touch-action: pan-y;
   user-select: none;
@@ -1400,8 +1378,8 @@ textarea {
   top: 0;
   bottom: 0;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: 0 2px 7px -4px rgba(33, 66, 92, 0.45);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 3px rgba(0, 0, 0, 0.4);
   transition: transform var(--dur) var(--ease);
 }
 .mode-slider[data-dragging='true'] .mode-slider-active {
@@ -1491,14 +1469,14 @@ textarea {
   height: 4px;
   overflow: hidden;
   border-radius: 3px;
-  background: rgba(119, 151, 182, 0.22);
+  background: rgba(255, 255, 255, 0.08);
 }
 .progress-fill {
   display: block;
   width: 100%;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #376cda, #2f85ec);
+  background: linear-gradient(90deg, #4a7cf5, #6bb0ff);
   transform-origin: left center;
   transition: transform 160ms linear;
 }
@@ -1606,7 +1584,7 @@ textarea {
   font-size: 12px;
 }
 .progress-readout strong {
-  font: 400 45px/1 var(--font-display);
+  font: 600 45px/1 var(--font-display);
   letter-spacing: -0.02em;
 }
 .download-stats {
@@ -1830,7 +1808,7 @@ textarea {
   overflow: auto;
   padding: 15px;
   border-radius: 7px;
-  background: rgba(221, 233, 245, 0.5);
+  background: rgba(0, 0, 0, 0.3);
 }
 .code-block pre {
   margin: 0;
@@ -1861,22 +1839,22 @@ textarea {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(36, 64, 90, 0.24);
-  backdrop-filter: blur(7px);
+  background: rgba(8, 10, 14, 0.62);
   animation: veil-in 180ms var(--ease);
 }
 .modal-card.panel {
   width: min(570px, 100%);
   max-height: min(680px, 88dvh);
   overflow-y: auto;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(232, 244, 254, 0.84));
+  background: #1a1c22;
+  border-color: var(--line);
 }
 .modal-card > * {
   animation: modal-in 220ms var(--ease);
 }
 .modal-card h2 {
   margin: 0;
-  font: 500 25px/1.25 var(--font-display);
+  font: 600 20px/1.3 var(--font-display);
 }
 
 .stage,
@@ -1887,7 +1865,7 @@ textarea {
 .code-block,
 .modal-card {
   scrollbar-width: thin;
-  scrollbar-color: rgba(64, 102, 136, 0.38) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
 }
 ::-webkit-scrollbar {
   width: 7px;
@@ -1896,7 +1874,7 @@ textarea {
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
-  background: rgba(64, 102, 136, 0.38);
+  background: rgba(255, 255, 255, 0.16);
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {
@@ -1928,10 +1906,10 @@ textarea {
 }
 @keyframes veil-in {
   from {
-    background-color: rgba(36, 64, 90, 0);
+    background-color: rgba(8, 10, 14, 0);
   }
   to {
-    background-color: rgba(36, 64, 90, 0.24);
+    background-color: rgba(8, 10, 14, 0.62);
   }
 }
 @keyframes modal-in {
@@ -1972,7 +1950,7 @@ textarea {
   }
   .selection-panel,
   .files-panel {
-    height: calc(100dvh - 220px);
+    height: calc(100dvh - 230px);
     padding-bottom: 0;
   }
   .files-panel {
@@ -1980,7 +1958,7 @@ textarea {
     padding-top: 14px;
   }
   .files-panel:has(.instruction-picker.is-open) {
-    min-height: calc(100dvh - 220px);
+    min-height: calc(100dvh - 230px);
   }
   .files-panel .selection-head h2 {
     font-size: 21px;
@@ -2238,4 +2216,244 @@ textarea {
     width: 100%;
     opacity: 0.55;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Density pass: content first. The title bar carries the status pills, the
+   page title is screen-reader only (the navigation already names the view),
+   and operational screens give nearly the whole window to their data.
+   ------------------------------------------------------------------------- */
+.workspace-header {
+  min-height: 44px;
+}
+.workspace-nav {
+  height: 44px;
+}
+.nav-item {
+  height: 32px;
+  font-size: 12px;
+}
+.workspace-heading {
+  height: 0;
+  min-height: 0;
+  margin: 0;
+}
+.workspace-heading h1 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.workspace-status {
+  position: fixed;
+  top: 10px;
+  right: calc(100vw - env(titlebar-area-width, 100vw) + 16px);
+  z-index: 5;
+  flex-wrap: nowrap;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+.pill {
+  min-height: 22px;
+  padding: 2px 9px;
+  font-size: 10px;
+}
+.workspace-footer {
+  min-height: 26px;
+  padding: 3px 20px;
+}
+.stage {
+  padding: 10px clamp(14px, 1.8vw, 26px) 10px;
+}
+.scene {
+  max-width: 1480px;
+}
+.view {
+  gap: 10px;
+}
+.download-view {
+  gap: 8px;
+}
+.download-stepper-row {
+  min-height: 28px;
+  gap: 12px;
+}
+.stepper {
+  margin-right: auto;
+}
+.step-dot,
+.stage-number {
+  width: 21px;
+  height: 21px;
+  font-size: 10px;
+}
+.step-line {
+  width: clamp(14px, 3vw, 44px);
+  margin: 0 8px;
+}
+.step-label {
+  font-size: 11px;
+}
+.btn-compact {
+  min-height: 26px;
+  padding: 4px 9px;
+}
+.panel {
+  gap: 12px;
+  padding: 16px 20px;
+}
+.surface-intro h2,
+.selection-head h2,
+.transfer-head h2 {
+  font-size: 17px;
+}
+.surface-intro p,
+.selection-head p,
+.transfer-head p {
+  margin-top: 3px;
+}
+
+/* Selection screens: the list is the product. */
+.selection-panel,
+.files-panel {
+  min-height: 300px;
+  height: calc(100dvh - 120px);
+  max-height: none;
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+.selection-head {
+  gap: 14px;
+}
+.selection-head > div:first-child {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 12px;
+}
+.selection-head h2 {
+  flex: none;
+  font-size: 16px;
+}
+.selection-head p {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-options {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 16px;
+  border-top: 1px solid var(--line-soft);
+}
+.file-options .instruction-picker,
+.file-options .layout-choice {
+  padding: 6px 0;
+  border: 0;
+}
+.file-options .instruction-picker.is-open {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  border-top: 1px solid var(--line-soft);
+}
+.file-options .layout-choice-icon,
+.file-options .layout-choice-copy small {
+  display: none;
+}
+.instruction-picker-head h3 {
+  margin-left: 10px;
+}
+.instruction-picker-head p {
+  margin: 3px 0 6px;
+}
+.layout-choice-copy strong {
+  color: var(--ink-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.toolbar {
+  gap: 6px;
+}
+.search,
+.toolbar select,
+.field input,
+.field select,
+.path-editor input,
+.automation-gnumber-input {
+  min-height: 32px;
+  padding: 5px 10px;
+}
+.toolbar .btn-chip,
+.toolbar .btn-secondary,
+.toolbar .btn-ghost {
+  min-height: 32px;
+  padding: 4px 10px;
+}
+.table-head {
+  min-height: 26px;
+  padding: 4px 10px;
+}
+.table-row {
+  min-height: 33px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+.list-row {
+  min-height: 34px;
+  padding: 5px 11px;
+}
+.file-name {
+  font-size: 12px;
+}
+.action-bar {
+  min-height: 46px;
+  margin: 0 -16px;
+  padding: 7px 16px;
+}
+.action-bar .btn-lg {
+  min-height: 34px;
+  padding: 7px 18px;
+  font-size: 12px;
+}
+.action-bar .btn-primary {
+  min-width: 160px;
+}
+.action-bar-summary {
+  grid-auto-flow: column;
+  align-items: baseline;
+  gap: 10px;
+}
+
+/* Navigation sits beside the brand so the right side of the title bar stays free for status. */
+.workspace-header {
+  justify-content: flex-start;
+  gap: 28px;
+}
+.workspace-nav {
+  position: relative;
+  left: auto;
+  width: 424px;
+  transform: none;
+}
+.selection-panel,
+.files-panel {
+  height: calc(100dvh - 134px);
+}
+@media (max-width: 1100px) {
+  .pill-demo {
+    display: none;
+  }
+}
+.workspace-nav {
+  width: 468px;
+}
+.nav-item {
+  gap: 6px;
+  white-space: nowrap;
 }
