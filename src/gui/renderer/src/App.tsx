@@ -1,6 +1,8 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, AppIcon } from "./components/Icons";
 import { Action, Surface, Scene, WorkspaceNavigation, WorkspaceHeading, WorkspaceFooter } from "./components/Workspace";
+import { DotWave, DotWaveSetting, readDotWaveMode, saveDotWaveMode } from "./components/DotWave";
+import type { DotWaveMode } from "./components/waveEngine";
 import { toGuiErrorMessage } from '../../errorMessage';
 import {
   DEMO_AGENT_OUTPUT,
@@ -264,6 +266,7 @@ function harnessSkillPath(info: Record<string, unknown> | null): string {
 }
 
 export function App() {
+  const [dotMode, setDotMode] = useState<DotWaveMode>(readDotWaveMode);
   const [stage, setStage] = useState<DownloadStage>('ready');
   const [activeView, setActiveView] = useState<View>('download');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('credentials');
@@ -1061,6 +1064,7 @@ export function App() {
 
   return (
     <div className="app">
+      <DotWave />
       <WorkspaceNavigation active={activeView} onNavigate={onNav} />
 
       <main className="stage">
@@ -1083,6 +1087,7 @@ export function App() {
                 <label className="field"><span className="field-label"><Icon name="key" size={14} /> Username / G-number</span><input value={config.username} onChange={event => setConfig(previous => ({ ...previous, username: event.target.value }))} placeholder="g12345678" autoComplete="username" /></label>
                 <label className="field"><span className="field-label"><Icon name="lock" size={14} /> Password</span><span className="password-input"><input type={showPassword ? 'text' : 'password'} value={config.password} onFocus={event => { if (config.password === SAVED_PASSWORD_MASK) event.currentTarget.select(); }} onChange={event => { setPasswordStored(false); setPasswordReadable(Boolean(event.target.value)); setPasswordError(''); setConfig(previous => ({ ...previous, password: event.target.value })); }} placeholder="Enter password" autoComplete="current-password" /><Action type="button" className="input-action" aria-label={showPassword ? 'Hide password' : 'Show password'} title={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(value => !value)}><Icon name={showPassword ? 'eye-off' : 'eye'} size={17} /></Action></span><span className="field-help">{passwordError || (passwordStored ? (passwordReadable ? 'Saved password loaded. It is hidden by default.' : 'A saved password is present but cannot be unlocked on this system. Re-enter it to repair secure storage.') : config.password ? 'Password entered. It is hidden by default.' : 'No password saved yet.')}</span></label>
                 <div className="field field-wide"><span className="field-label"><Icon name="folder" size={14} /> Download directory</span><div className="path-editor"><input data-testid="download-directory-input" value={config.downloadDir} onChange={event => setConfig(previous => ({ ...previous, downloadDir: event.target.value }))} /><div className="directory-actions"><Action className="btn-secondary" onClick={chooseDownloadDirectory}><Icon name="folder" size={16} /> Choose folder</Action><Action className="btn-ghost" onClick={openDownloads}><Icon name="open" size={16} /> Open directory</Action></div></div><span className="field-help">Files will be saved here. Choose a folder or edit the path, then save settings.</span></div>
+                <div className="field field-wide"><span className="field-label"><Icon name="gauge" size={14} /> Background animation</span><DotWaveSetting mode={dotMode} onChange={mode => { setDotMode(mode); saveDotWaveMode(mode); }} /><span className="field-help">A slow dot wave behind the interface. Choose Still or Off to save power; it also stays still when your system asks for reduced motion.</span></div>
                 <div className="field field-wide"><span id="browser-mode-label" className="field-label"><Icon name="monitor" size={14} /> Browser mode</span><BrowserModeSlider headless={config.headless} onChange={headless => setConfig(previous => ({ ...previous, headless }))} /><span className="field-help">Headless is the default and keeps the browser hidden. Use Visible when you need to watch a Blackboard sign-in or troubleshoot it.</span></div>
               </div>
               <div className="btn-row"><Action className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save settings</Action><Action className="btn-secondary" onClick={() => saveSettings(true)}><Icon name="shield" size={17} /> Save and test login</Action><Action className="btn-danger" onClick={resetCredentials}><Icon name="refresh" size={17} /> Reset credentials</Action></div>

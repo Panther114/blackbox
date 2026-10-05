@@ -33,6 +33,10 @@ An operational workspace. Density is a feature: the file and course lists get ne
 - Surfaces are 3.5–6% white over the material with a 1px hairline and a top highlight. No `backdrop-filter`, no photographic background: the OS does the glass, so it costs nothing at render time.
 - Cobalt (`#5b8cff`) is the single action color; green, amber and red appear only with labels and icons.
 
+## Ambient background
+
+A transparent WebGL canvas behind the app draws a perspective grid of cobalt-to-cyan dots displaced by layered sine waves (vertex-shader only, 30 fps focused / 10 fps unfocused, DPR clamped to 1.5). Pointer movement tilts the camera slightly and clicks send ripples. Data surfaces (`.panel`, `.table`, `.list`) are mostly opaque and the wave dims to ~66% on dense screens so text stays crisp; the Ready/launch panels stay glassy. It pauses when hidden, is a still frame under `prefers-reduced-motion` or setting Still, and is removed by setting Off (`localStorage` `blackbox.dotwave`). A Canvas2D fallback runs if WebGL is unavailable.
+
 ## Typography
 
 Satoshi (variable, bundled with its ITF FFL license) for everything; headings are 600 weight with tight tracking. No serif display face, no runtime font requests.

@@ -2457,3 +2457,42 @@ html:not([data-material='mica']) .app {
   gap: 6px;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------------------
+   Ambient dot wave: behind everything, never interactive, fading out toward
+   the top so the title bar and data stay calm.
+   ------------------------------------------------------------------------- */
+.app {
+  isolation: isolate;
+}
+.dotwave {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.9;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 6%, #000 46%);
+  mask-image: linear-gradient(to bottom, transparent 6%, #000 46%);
+}
+
+/* Data surfaces stay legible over the wave; the entry screen stays glassy. */
+.panel {
+  background: linear-gradient(180deg, rgba(30, 32, 40, 0.74), rgba(24, 26, 33, 0.7));
+}
+.ready-panel,
+.launch-panel {
+  background: linear-gradient(180deg, rgba(30, 32, 40, 0.5), rgba(24, 26, 33, 0.38));
+}
+.table,
+.list,
+.course-block-list,
+.instruction-course-list {
+  background: rgba(14, 16, 21, 0.58);
+}
+.app:has(.files-panel) .dotwave,
+.app:has(.selection-panel) .dotwave,
+.app:has(.settings-view) .dotwave {
+  opacity: 0.66;
+}

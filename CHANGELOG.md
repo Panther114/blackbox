@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - New dark interface with the native Windows 11 Mica material, a thin title bar with tabs and status, and a single typeface. Windows 10 gets a solid dark surface.
 - Denser layouts: the file and course lists get roughly twice the rows (about ten files at the 980x680 minimum window); the page title is now screen-reader only and the options sit on one row.
+- A slow, GPU-drawn fake-3D dot wave sits behind the interface (cursor parallax and click ripples). It is dimmed under data, pauses when the window is hidden, stays still under reduced motion, and can be set to On / Still / Off in Settings. Cost: about 1% of one CPU core and ~80 MB.
 - Faster to render and start: no photographic background, no backdrop blur, update checker loaded on demand.
 - The download history is now a small JSON file instead of a SQLite database, removing the native module. Existing downloads on disk are still detected.
 - The installer is Windows-only and about 20% smaller (en-US locales only, unused Chromium components removed, runtime dependencies cut to what the app uses).

@@ -135,6 +135,7 @@ function captureForReview(): void {
   const target = process.argv.find(arg => arg.startsWith('--capture='))?.slice('--capture='.length);
   const window = mainWindow;
   if (!target || !window) return;
+  const captureDelay = Number(process.argv.find(arg => arg.startsWith('--capture-after='))?.slice('--capture-after='.length)) || 1600;
   const size = process.argv.find(arg => arg.startsWith('--size='))?.slice('--size='.length).split('x').map(Number);
   if (size && size.length === 2 && size.every(Number.isFinite)) window.setContentSize(size[0], size[1]);
   window.webContents.once('did-finish-load', () => {
@@ -143,7 +144,7 @@ function captureForReview(): void {
         .capturePage()
         .then(image => fs.writeFileSync(target, image.toPNG()))
         .finally(() => app.exit(0));
-    }, 1600);
+    }, captureDelay);
   });
 }
 
@@ -174,6 +175,9 @@ function createWindow(): void {
   });
 
   const query: Record<string, string> = { material: mica ? 'mica' : 'none' };
+  const dots = process.argv.find(arg => arg.startsWith('--dots='))?.slice('--dots='.length);
+  if (dots) query.dots = dots;
+  if (process.argv.includes('--forcefocus')) query.forcefocus = '1';
   if (isDemoGui()) {
     query.demo = '1';
     const screen = process.argv.find(arg => arg.startsWith('--screen='));

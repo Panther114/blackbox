@@ -36,7 +36,8 @@ Example shape (Chinese build):
 - Check layouts at the supported 980x680 minimum, 1120x760 and 1440x900 before
   packaging. Capture with the hidden-window flag
   (`electron dist/gui/main.js --demo --screen=<name> --no-material --capture=<png> --size=WxH`);
-  do not take desktop screenshots or show test windows.
+  extra flags: `--capture-after=<ms>` (second timestamp), `--dots=off`, `--forcefocus`
+  (measure the focused animation path). Do not take desktop screenshots or show test windows.
 - Packaging is Windows-only through the canonical electron-builder pipeline and
   must pass the packaged dependency-closure check (`scripts/after-pack.cjs`).
   Never repair an archive by copying a single missing module. Preserve existing
