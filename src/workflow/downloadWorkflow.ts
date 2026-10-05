@@ -1,7 +1,8 @@
 import { EventEmitter } from 'events';
 import { BlackboxDownloader } from '../index';
 import { Config, Course, DiscoveredFile, DownloadLayout, ExistingFileState } from '../types';
-import { courseFolderForSavePath, pruneEmptyDirectories } from '../downloadDirectory';
+import { courseFolderForSavePath, normalizeDownloadPath, pruneEmptyDirectories } from '../downloadDirectory';
+import path from 'path';
 import { writeManualInstructions } from '../instructions/exporter';
 import { log } from '../utils/logger';
 import {
@@ -56,6 +57,29 @@ export class DownloadWorkflow extends EventEmitter {
     return this.cancelled;
   }
 
+  /** The folder this run saves into. */
+  getDownloadDir(): string {
+    return this.config.downloadDir;
+  }
+
+  /**
+   * Point the run at the folder currently chosen in Settings. Paths were fixed
+   * when the courses were scanned, so a folder changed during or after the scan
+   * would otherwise be ignored and the files would land in the old one. Returns
+   * a function that re-roots an already discovered save path.
+   */
+  retargetDownloadDir(newDir: string): (savePath: string) => string {
+    const oldDir = path.resolve(this.config.downloadDir);
+    const target = path.resolve(newDir);
+    if (normalizeDownloadPath(oldDir) === normalizeDownloadPath(target)) return savePath => savePath;
+    log.info(`Download folder changed during the run: saving to ${target} instead of ${oldDir}.`);
+    this.config.downloadDir = target;
+    return savePath => {
+      const relative = path.relative(oldDir, savePath);
+      return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? path.join(target, relative) : savePath;
+    };
+  }
+
   async initialize(): Promise<void> {
     this.emit('login:start', {});
     this.blackboxDownloader = new BlackboxDownloader(this.config);
@@ -66,6 +90,7 @@ export class DownloadWorkflow extends EventEmitter {
     this.blackboxDownloader.on('download:error', data => this.emit('download:error', data));
     this.blackboxDownloader.on('download:skip', data => this.emit('download:skip', data));
     this.blackboxDownloader.on('download:rejected', data => this.emit('download:rejected', data));
+    this.blackboxDownloader.on('transfer:progress', data => this.emit('transfer:progress', data));
     this.blackboxDownloader.on('files:discovery:progress', data => this.emit('files:discovery:progress', data));
     this.blackboxDownloader.on('files:metadata:progress', data => this.emit('files:metadata:progress', data));
     this.blackboxDownloader.on('files:metadata:complete', data => this.emit('files:metadata:complete', data));

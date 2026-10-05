@@ -2530,3 +2530,38 @@ html:not([data-material='mica']) .app {
 html[data-shell='tauri'] .workspace-status {
   right: 156px;
 }
+
+/* Sortable table headers and the visible destination folder. */
+.th-sort {
+  display: inline-flex;
+  min-height: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.th-sort.num {
+  justify-content: flex-end;
+}
+.th-sort:hover {
+  color: var(--ink);
+}
+.th-sort.is-active {
+  color: var(--blue-ink);
+}
+.th-arrow {
+  min-width: 8px;
+  font-size: 10px;
+}
+.transfer-destination,
+.summary-panel .mono {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+  word-break: break-all;
+}

@@ -674,6 +674,7 @@ async function initializeDesktopApp(): Promise<void> {
       files: payload?.files || [],
       instructionCourses: payload?.instructionCourses || [],
       layout: payload?.layout === 'flat' ? 'flat' : 'hierarchy',
+      downloadDir: desktopStore.loadSettings().downloadDir,
     });
   });
 

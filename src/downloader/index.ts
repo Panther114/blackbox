@@ -38,6 +38,7 @@ import {
   scanDownloadDirectory,
 } from '../downloadDirectory';
 import { getFreeDiskSpace, LOW_DISK_SPACE_BYTES } from '../utils/helpers';
+import { TransferTracker } from './transfer';
 
 /** Milliseconds without data before a download stream is considered stalled. */
 const INACTIVITY_TIMEOUT_MS = 30_000;
@@ -119,6 +120,8 @@ export class FileDownloader extends EventEmitter {
   private cancelRequested = false;
   /** Live response streams, destroyed when the user cancels a download. */
   private activeStreams = new Set<{ destroy: (error?: Error) => void }>();
+  /** Progress of the running batch; the UI shows its snapshots as they are. */
+  private tracker: TransferTracker | null = null;
   /** Lazily built url -> local paths index of the file-tree cache (flat-layout dedupe). */
   private treePathsByUrl: Map<string, Set<string>> | null = null;
 
@@ -439,6 +442,7 @@ export class FileDownloader extends EventEmitter {
     let attemptOutcome: DownloadOutcome = 'completed';
 
     const downloadFn = async (): Promise<void> => {
+      this.tracker?.attempt(file.url);
 
       let finalPath: string | null = null;
       let tmpPath: string | null = null;
@@ -565,6 +569,7 @@ export class FileDownloader extends EventEmitter {
         response.data.on('data', (chunk: Buffer) => {
           resetInactivityTimer();
           downloadedSize += chunk.length;
+          this.tracker?.progress(file.url, downloadedSize);
           emitProgress();
         });
 
@@ -618,6 +623,7 @@ export class FileDownloader extends EventEmitter {
         releaseReservedPath(finalPath);
 
         const fileSize = fs.statSync(finalPath).size;
+        this.tracker?.recordActualSize(file.url, fileSize);
         this.db.upsertDownload({
           url: file.url,
           path: finalPath,
@@ -780,21 +786,37 @@ export class FileDownloader extends EventEmitter {
     // deletion is reflected immediately, even when this instance is reused.
     this.indexedDownloadFiles = scanDownloadDirectory(this.config.downloadDir);
 
-    const results = await Promise.all(
-      files.map(file =>
-        this.limiter(async () => {
-          if (this.cancelRequested) {
-            // Drain the queue instantly: a cancelled batch must not keep
-            // starting new connections while the UI unwinds.
-            outcomes[file.url] = { status: 'cancelled' };
-            return 'cancelled' as DownloadOutcome;
-          }
-          const outcome = await this.downloadFile(file);
-          outcomes[file.url] = { status: outcome };
-          return outcome;
-        })
-      )
-    );
+    // One tracker per batch: every file reports its fate here, and the UI renders the snapshots.
+    const tracker = new TransferTracker(files);
+    this.tracker = tracker;
+    const publish = () => this.emit('transfer:progress', tracker.snapshot());
+    publish();
+    const ticker = setInterval(publish, 200);
+
+    let results: DownloadOutcome[];
+    try {
+      results = await Promise.all(
+        files.map(file =>
+          this.limiter(async () => {
+            if (this.cancelRequested) {
+              // Drain the queue instantly: a cancelled batch must not keep
+              // starting new connections while the UI unwinds.
+              outcomes[file.url] = { status: 'cancelled' };
+              tracker.settle(file.url, 'cancelled');
+              return 'cancelled' as DownloadOutcome;
+            }
+            const outcome = await this.downloadFile(file);
+            outcomes[file.url] = { status: outcome };
+            tracker.settle(file.url, outcome);
+            return outcome;
+          })
+        )
+      );
+    } finally {
+      clearInterval(ticker);
+      publish();
+      this.tracker = null;
+    }
 
     const failedCount = results.filter(outcome => outcome === 'failed').length;
     const cancelledCount = results.filter(outcome => outcome === 'cancelled').length;

@@ -13,6 +13,11 @@ import {
   DEMO_SUMMARY,
 } from './demoData';
 
+type TransferSnapshot = {
+  total: number; settled: number; completed: number; skipped: number; rejected: number; failed: number; cancelled: number; retrying: number;
+  bytes: number; totalBytes: number; unknownSize: number; percent: number; basis: 'bytes' | 'files'; speed: number; etaSeconds: number | null; elapsedMs: number; active: string[];
+};
+type SortKey = 'default' | 'name' | 'type' | 'size' | 'course';
 type DownloadStage = 'ready' | 'courses' | 'files' | 'download' | 'summary';
 type View = 'download' | 'automation' | 'agent' | 'settings';
 type SettingsSection = 'credentials' | 'courses' | 'diagnostics' | 'updates';
@@ -71,6 +76,8 @@ type DoctorRow = { status: 'pass' | 'warn' | 'fail'; message: string; required?:
 /** Which layouts already hold a copy of a discovered file. */
 type ExistingFileState = { hierarchy: boolean; flat: boolean; size?: number };
 type Summary = {
+  downloadDir?: string;
+  durationMs?: number;
   coursesDiscovered: number;
   coursesSelected: number;
   filesDiscovered: number;
@@ -134,6 +141,13 @@ const eta = (seconds: number): string => {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 };
 
+const formatDuration = (ms: number): string => {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return hours > 0 ? `${hours}h ${minutes}m` : minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+};
 const clampPercent = (value: number): number => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -297,6 +311,9 @@ export function App() {
   const [files, setFiles] = useState<DiscoveredFile[]>([]);
   const [fileSearch, setFileSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [sortKey, setSortKey] = useState<SortKey>('default');
+  const [sortDesc, setSortDesc] = useState(false);
+  const [transfer, setTransfer] = useState<TransferSnapshot | null>(null);
   const [selectedFileUrls, setSelectedFileUrls] = useState<Set<string>>(new Set());
   /** Per-URL, per-layout "already saved" state from the last scan. */
   const [existingByUrl, setExistingByUrl] = useState<Record<string, ExistingFileState>>({});
@@ -439,37 +456,11 @@ export function App() {
       if (evt.type === 'instructions:write:start') setInstructionProgress(previous => ({ phase: 'write', completed: 0, total: Number(payload.instructionsDiscovered || 0), currentCourse: '', currentSection: '', currentTitle: '' }));
       if (evt.type === 'instructions:write:progress') setInstructionProgress({ phase: 'write', completed: Number(payload.completed || 0), total: Number(payload.total || 0), currentCourse: String(payload.currentCourse || ''), currentSection: String(payload.currentSection || ''), currentTitle: String(payload.currentTitle || '') });
       if (evt.type === 'instructions:write:complete') setInstructionProgress(previous => previous ? { ...previous, completed: previous.total, currentTitle: 'Instructions saved' } : previous);
-      if (evt.type === 'download:start') {
-        const url = String(payload.url || '');
-        if (selectedRunUrlSetRef.current.has(url)) setDownloadState(previous => ({ ...previous, currentFile: String(payload.name || payload.filename || '') }));
-      }
-      if (evt.type === 'download:progress') {
-        const url = String(payload.url || '');
-        if (selectedRunUrlSetRef.current.has(url)) {
-          const downloaded = Number(payload.downloaded || 0);
-          setPerUrlDownloaded(previous => {
-            const next = new Map(previous);
-            const old = next.get(url) || 0;
-            if (downloaded > old) {
-              const delta = downloaded - old;
-              next.set(url, downloaded);
-              setSpeedWindow(current => ({ ...current, bytes: current.bytes + delta }));
-              const knownSize = selectedRunKnownByUrlRef.current.get(url);
-              if (typeof knownSize === 'number') {
-                const knownDelta = Math.max(0, Math.min(downloaded, knownSize) - Math.min(old, knownSize));
-                if (knownDelta > 0) setDownloadState(current => ({ ...current, downloadedBytes: Math.min(current.totalKnownBytes, current.downloadedBytes + knownDelta) }));
-              }
-            }
-            return next;
-          });
-        }
-      }
-      if (evt.type === 'download:complete' || evt.type === 'download:error' || evt.type === 'download:skip' || evt.type === 'download:rejected') {
-        const url = String(payload.url || '');
-        if (!url || selectedRunUrlSetRef.current.has(url)) {
-          const key: 'completed' | 'failed' | 'skipped' = evt.type === 'download:complete' ? 'completed' : evt.type === 'download:error' ? 'failed' : 'skipped';
-          setDownloadState(previous => ({ ...previous, [key]: previous[key] + 1 }));
-        }
+      if (evt.type === 'transfer:progress') {
+        // The backend owns the numbers: counts, bytes, speed and ETA arrive as one snapshot.
+        const snapshot = evt.payload as TransferSnapshot;
+        setTransfer(snapshot);
+        setDownloadState({ completed: snapshot.completed, failed: snapshot.failed, skipped: snapshot.skipped + snapshot.rejected, downloadedBytes: snapshot.bytes, totalKnownBytes: snapshot.totalBytes, unknownCount: snapshot.unknownSize, speed: snapshot.speed, currentFile: snapshot.active[0] || '' });
       }
       if (evt.type === 'download:cancel') { setIsCancellingDownload(true); setStatus('Stopping the download. Files already saved are kept.'); }
       if (evt.type === 'diagnostics:progress') setDiagnosticsProgress({ running: Boolean(payload.running), completed: Number(payload.completed || 0), total: Number(payload.total || 0), current: String(payload.current || ''), loginTest: Boolean(payload.loginTest) });
@@ -525,6 +516,29 @@ export function App() {
     if (savedInLayout(file.url) && !showSavedFiles) return false;
     return true;
   }), [files, deferredFileSearch, typeFilter, savedInLayout, showSavedFiles]);
+  const sortedFiles = useMemo(() => {
+    if (sortKey === 'default') return selectableFiles;
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    const byName = (a: DiscoveredFile, b: DiscoveredFile) => collator.compare(a.name, b.name);
+    const compare = (a: DiscoveredFile, b: DiscoveredFile): number => {
+      if (sortKey === 'name') return byName(a, b);
+      if (sortKey === 'type') return collator.compare(fileKind(a), fileKind(b)) || byName(a, b);
+      if (sortKey === 'course') return collator.compare(`${a.courseName} ${a.sectionName}`, `${b.courseName} ${b.sectionName}`) || byName(a, b);
+      // Size: files with an unknown size always sort last, whichever direction is chosen.
+      const unknownA = typeof a.size !== 'number';
+      const unknownB = typeof b.size !== 'number';
+      if (unknownA || unknownB) return unknownA === unknownB ? byName(a, b) : unknownA ? 1 : -1;
+      return (a.size as number) - (b.size as number) || byName(a, b);
+    };
+    const sorted = [...selectableFiles].sort(compare);
+    if (!sortDesc) return sorted;
+    return sortKey === 'size' ? [...sorted.filter(file => typeof file.size === 'number').reverse(), ...sorted.filter(file => typeof file.size !== 'number')] : sorted.reverse();
+  }, [selectableFiles, sortKey, sortDesc]);
+  function toggleSort(key: Exclude<SortKey, 'default'>) {
+    if (sortKey !== key) { setSortKey(key); setSortDesc(key === 'size'); return; }
+    if (sortDesc === (key === 'size')) { setSortDesc(previous => !previous); return; }
+    setSortKey('default'); setSortDesc(false);
+  }
   const pendingFiles = useMemo(
     () => files.filter(file => !savedInLayout(file.url)),
     [files, savedInLayout],
@@ -539,7 +553,7 @@ export function App() {
       .map(course => ({ id: course.id, name: course.name, url: '', path: '' }));
     return [...blockedCourseCatalog, ...missing];
   }, [blockedCourseCatalog, config.blockedCourses]);
-  const progressPercent = downloadState.totalKnownBytes > 0 ? clampPercent((downloadState.downloadedBytes / downloadState.totalKnownBytes) * 100) : selectedRunFileCount > 0 ? clampPercent(((downloadState.completed + downloadState.skipped) / selectedRunFileCount) * 100) : 0;
+  const progressPercent = transfer ? transfer.percent : downloadState.totalKnownBytes > 0 ? clampPercent((downloadState.downloadedBytes / downloadState.totalKnownBytes) * 100) : selectedRunFileCount > 0 ? clampPercent(((downloadState.completed + downloadState.skipped) / selectedRunFileCount) * 100) : 0;
   const remainingKnownBytes = Math.max(0, downloadState.totalKnownBytes - downloadState.downloadedBytes);
   const countProgress = downloadState.completed + downloadState.skipped;
   const discoveryPercent = discoveryProgress && discoveryProgress.total > 0 ? clampPercent((discoveryProgress.completed / discoveryProgress.total) * 100) : 0;
@@ -673,7 +687,7 @@ export function App() {
     setIsPreparingDownload(true); setStage('ready'); setSummary(null); setInstructionProgress(null); setSelectedRunInstructionCourseCount(0); setPreparationProgress({ completed: 0, total: 3, label: 'Connecting to Blackboard (offline demo)' }); setStatus('Simulating a Blackboard session. No network request will be made.');
     await delay(650); setPreparationProgress({ completed: 1, total: 3, label: 'Loading your course list' }); await delay(550); setPreparationProgress({ completed: 2, total: 3, label: 'Indexing available courses' }); await delay(750);
     const availableDemoCourses = DEMO_COURSES.filter(course => !config.blockedCourses.some(blocked => blocked.id === course.id));
-    setCourses(availableDemoCourses); setSelectedCourseIds(new Set(availableDemoCourses.map(course => course.id))); setSelectedInstructionCourseIds(new Set(availableDemoCourses.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus(''); setPreparationProgress(null); setIsPreparingDownload(false);
+    setCourses(availableDemoCourses); setSelectedCourseIds(new Set(availableDemoCourses.map(course => course.id))); setSelectedInstructionCourseIds(new Set()); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus(''); setPreparationProgress(null); setIsPreparingDownload(false);
   }
 
   async function startFlow() {
@@ -694,7 +708,7 @@ export function App() {
       await window.blackboxGui.workflowStart({ username: config.username || undefined, password: useStoredPassword ? undefined : config.password || undefined, downloadDir: config.downloadDir, headless: config.headless });
       setPreparationProgress({ completed: 1, total: 3, label: 'Loading your course list' });
       const discovered = await window.blackboxGui.discoverCourses();
-      setCourses(discovered); setSelectedCourseIds(new Set(discovered.map(course => course.id))); setSelectedInstructionCourseIds(new Set(discovered.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus('');
+      setCourses(discovered); setSelectedCourseIds(new Set(discovered.map(course => course.id))); setSelectedInstructionCourseIds(new Set()); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus('');
     });
     setIsPreparingDownload(false); setPreparationProgress(null);
   }
@@ -716,7 +730,7 @@ export function App() {
     setShowSavedFiles(false);
     setFiles(DEMO_FILES);
     setSelectedFileUrls(new Set(DEMO_FILES.filter(file => !demoExisting[file.url]?.[keepHierarchy ? 'hierarchy' : 'flat']).map(file => file.url)));
-    setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id))); setKnownByUrl(new Map(DEMO_FILES.map(file => [file.url, file.size || 0]))); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' }); setSelectedRunFileCount(0); setSelectedRunInstructionCourseCount(0); setInstructionProgress(null); setDiscoveryProgress(null); setStage('files'); setIsScanningCourses(false);
+    setSelectedInstructionCourseIds(new Set()); setKnownByUrl(new Map(DEMO_FILES.map(file => [file.url, file.size || 0]))); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' }); setSelectedRunFileCount(0); setSelectedRunInstructionCourseCount(0); setInstructionProgress(null); setDiscoveryProgress(null); setStage('files'); setIsScanningCourses(false);
   }
 
   async function runScanFiles() {
@@ -733,7 +747,7 @@ export function App() {
         setShowSavedFiles(false);
         // Only files the current layout still needs are pre-selected.
         setSelectedFileUrls(new Set(result.files.filter(file => !existing[file.url]?.[keepHierarchy ? 'hierarchy' : 'flat']).map(file => file.url)));
-        setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id)));
+        setSelectedInstructionCourseIds(new Set());
         const known = new Map<string, number>();
         for (const file of result.files) {
           if (typeof file.size === 'number') known.set(file.url, file.size);
@@ -816,7 +830,7 @@ export function App() {
       const runInstructionCourses = [...selectedInstructionCourses];
       const runLayout: 'hierarchy' | 'flat' = keepHierarchy ? 'hierarchy' : 'flat';
       setRunLayout(runLayout);
-      const totalKnownBytes = Array.from(selectedKnownByUrl.values()).reduce((total, size) => total + size, 0); selectedRunUrlSetRef.current = new Set(runSelectedFiles.map(file => file.url)); selectedRunKnownByUrlRef.current = selectedKnownByUrl; setSelectedRunFileCount(runSelectedFiles.length); setSelectedRunInstructionCourseCount(runInstructionCourses.length); setPerUrlDownloaded(new Map()); setSpeedWindow({ lastTs: Date.now(), bytes: 0 }); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: runSelectedFiles.length - selectedKnownByUrl.size, speed: 0, currentFile: '' }); setInstructionProgress(runInstructionCourses.length > 0 ? { phase: 'discovery', completed: 0, total: runInstructionCourses.length, itemsFound: 0 } : null); setStatus(''); setStage('download');
+      const totalKnownBytes = Array.from(selectedKnownByUrl.values()).reduce((total, size) => total + size, 0); selectedRunUrlSetRef.current = new Set(runSelectedFiles.map(file => file.url)); selectedRunKnownByUrlRef.current = selectedKnownByUrl; setTransfer(null); setSelectedRunFileCount(runSelectedFiles.length); setSelectedRunInstructionCourseCount(runInstructionCourses.length); setPerUrlDownloaded(new Map()); setSpeedWindow({ lastTs: Date.now(), bytes: 0 }); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: runSelectedFiles.length - selectedKnownByUrl.size, speed: 0, currentFile: '' }); setInstructionProgress(runInstructionCourses.length > 0 ? { phase: 'discovery', completed: 0, total: runInstructionCourses.length, itemsFound: 0 } : null); setStatus(''); setStage('download');
       try {
         const result = (await window.blackboxGui.downloadFiles(runSelectedFiles, runInstructionCourses, runLayout)) as Summary; setSummary(result); setStage('summary');
         if (result.cancelled) setStatus('Download cancelled. Files and text already saved were kept.');
@@ -1078,7 +1092,7 @@ export function App() {
 
         {activeView === 'download' && stage === 'ready' && !isPreparingDownload && <section className="view"><Surface className="panel ready-panel"><div className="ready-main"><span className="ready-icon"><Icon name="download" size={24} /></span><div><h2>Ready to download</h2><p>Choose courses, review files, and save documents to your configured folder.</p></div></div><div className="ready-actions"><Action className="btn-primary btn-lg" onClick={hasCredentials ? beginDownload : () => { setActiveView('settings'); setSettingsSection('credentials'); }}><Icon name={hasCredentials ? 'download' : 'key'} size={17} />{hasCredentials ? 'Start a download' : 'Open credentials'}</Action><Action className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={17} /> Open downloads</Action><Action className="btn-danger" onClick={clearDownloads}><Icon name="x" size={17} /> Clear downloaded files</Action></div><dl className="ready-meta"><div><dt>Access</dt><dd>{hasCredentials ? 'Credentials ready' : 'Credentials required'}</dd></div><div><dt>Save to</dt><dd className="mono">{paths.downloads || config.downloadDir || '...'}</dd></div></dl></Surface></section>}
 
-        {activeView === 'settings' && <section className="view settings-view"><nav className="settings-tabs" aria-label="Settings sections">{(['credentials', 'courses', 'diagnostics', 'updates'] as SettingsSection[]).map(section => <Action key={section} className={settingsSection === section ? 'is-active' : ''} aria-current={settingsSection === section ? 'page' : undefined} onClick={() => setSettingsSection(section)}>{section === 'credentials' ? 'Credentials' : section === 'courses' ? 'Courses' : section === 'diagnostics' ? 'Diagnostics' : 'Updates'}</Action>)}</nav>
+        {activeView === 'settings' && <section className="view settings-view"><nav className="settings-tabs" aria-label="Settings sections">{(['credentials', 'courses', 'diagnostics', 'updates'] as SettingsSection[]).map(section => <Action key={section} className={settingsSection === section ? 'is-active' : ''} aria-current={settingsSection === section ? 'page' : undefined} onClick={() => setSettingsSection(section)}>{section === 'credentials' ? 'Credentials' : section === 'courses' ? 'Course filter' : section === 'diagnostics' ? 'Diagnostics' : 'Updates'}</Action>)}</nav>
 
           {settingsSection === 'credentials' && (
             <Surface className="panel settings-panel" data-testid="credentials-panel">
@@ -1096,16 +1110,16 @@ export function App() {
 
           {settingsSection === 'courses' && (
             <Surface className="panel settings-panel" data-testid="course-settings-panel">
-              <div className="surface-intro"><div><h2>Course filters</h2><p>Scan your Blackboard course list and block courses you no longer want Blackbox to check.</p></div><span className={'state-badge ' + (config.blockedCourses.length ? 'state-warn' : 'state-neutral')}>{config.blockedCourses.length ? config.blockedCourses.length + ' blocked' : 'None blocked'}</span></div>
-              <div className="course-block-actions"><Action className="btn-primary" disabled={isScanningBlockedCourses} onClick={scanBlockedCourses}><Icon name="scan" size={17} className={isScanningBlockedCourses ? 'is-spinning' : ''} /> {isScanningBlockedCourses ? 'Scanning courses...' : 'Scan available courses'}</Action><span className="field-help">Blocked courses stay out of Downloads until you unblock and save them.</span></div>
+              <div className="surface-intro"><div><h2>Course filter</h2><p>Hide courses you never want to download. Filtered courses are removed from the course list in Downloads.</p></div><span className={'state-badge ' + (config.blockedCourses.length ? 'state-warn' : 'state-neutral')}>{config.blockedCourses.length ? config.blockedCourses.length + ' filtered out' : 'No courses filtered'}</span></div>
+              <div className="course-block-actions"><Action className="btn-primary" disabled={isScanningBlockedCourses} onClick={scanBlockedCourses}><Icon name="scan" size={17} className={isScanningBlockedCourses ? 'is-spinning' : ''} /> {isScanningBlockedCourses ? 'Scanning courses...' : 'Scan available courses'}</Action><span className="field-help">Tick a course to filter it out of Downloads. Untick it and save to bring it back.</span></div>
               <div className="course-block-list" aria-busy={isScanningBlockedCourses}>
                 {blockedCourseRows.map(course => {
                   const blocked = config.blockedCourses.some(candidate => candidate.id === course.id);
-                  return <label key={course.id} className={'list-row ' + (blocked ? 'is-selected' : '')} title={course.name}><input type="checkbox" checked={blocked} disabled={isScanningBlockedCourses} onChange={() => toggleBlockedCourse(course)} /><span className="list-index"><Icon name={blocked ? 'x-circle' : 'book'} size={15} /></span><span className="list-name">{course.name}</span><span className={'list-state ' + (blocked ? 'is-on' : '')}>{blocked ? 'Blocked' : 'Available'}</span></label>;
+                  return <label key={course.id} className={'list-row ' + (blocked ? 'is-selected' : '')} title={course.name}><input type="checkbox" checked={blocked} disabled={isScanningBlockedCourses} onChange={() => toggleBlockedCourse(course)} /><span className="list-index"><Icon name={blocked ? 'x-circle' : 'book'} size={15} /></span><span className="list-name">{course.name}</span><span className={'list-state ' + (blocked ? 'is-on' : '')}>{blocked ? 'Filtered out' : 'Shown'}</span></label>;
                 })}
                 {blockedCourseRows.length === 0 && <div className="empty-state"><Icon name="book" size={23} /><strong>No course list yet</strong><span>Scan your available courses to choose permanent filters.</span></div>}
               </div>
-              <div className="btn-row"><Action className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save course filters</Action><Action className="btn-ghost" onClick={() => setConfig(previous => ({ ...previous, blockedCourses: [] }))} disabled={config.blockedCourses.length === 0}><Icon name="refresh" size={17} /> Unblock all</Action></div>
+              <div className="btn-row"><Action className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save course filters</Action><Action className="btn-ghost" onClick={() => setConfig(previous => ({ ...previous, blockedCourses: [] }))} disabled={config.blockedCourses.length === 0}><Icon name="refresh" size={17} /> Clear filter</Action></div>
             </Surface>
           )}
 
@@ -1234,7 +1248,7 @@ export function App() {
                 <CountSummary items={[`${pendingFiles.length} to save`, savedFileCount > 0 ? `${savedFileCount} saved` : `${selectableFiles.length} shown`, `${selectedFileUrls.size} selected`, `${files.length} total`]} />
               </div>
               <div className="file-options">
-              <CourseInstructionPicker courses={selectedCourses} selectedIds={selectedInstructionCourseIds} expanded={instructionPickerOpen} onToggleExpanded={() => setInstructionPickerOpen(previous => !previous)} onToggle={courseId => setSelectedInstructionCourseIds(previous => { const next = new Set(previous); if (next.has(courseId)) next.delete(courseId); else next.add(courseId); return next; })} onSelectAll={() => setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id)))} onClear={() => setSelectedInstructionCourseIds(new Set())} />
+              <CourseInstructionPicker courses={selectedCourses} selectedIds={selectedInstructionCourseIds} expanded={instructionPickerOpen} onToggleExpanded={() => setInstructionPickerOpen(previous => !previous)} onToggle={courseId => setSelectedInstructionCourseIds(previous => { const next = new Set(previous); if (next.has(courseId)) next.delete(courseId); else next.add(courseId); return next; })} onSelectAll={() => setSelectedInstructionCourseIds(new Set())} onClear={() => setSelectedInstructionCourseIds(new Set())} />
               <div className="layout-choice" data-testid="layout-choice">
                 <span className="layout-choice-icon"><Icon name="folder" size={16} /></span>
                 <div className="layout-choice-copy">
@@ -1254,6 +1268,14 @@ export function App() {
                   <option value="all">All types</option>
                   {fileTypes.map(type => <option key={type} value={type}>{type.toUpperCase()}</option>)}
                 </select>
+                <select aria-label="Sort files" data-testid="sort-files" value={sortKey} onChange={event => { const key = event.target.value as SortKey; setSortKey(key); setSortDesc(key === 'size'); }}>
+                  <option value="default">Sort: default</option>
+                  <option value="name">Sort: name</option>
+                  <option value="type">Sort: type</option>
+                  <option value="size">Sort: size</option>
+                  <option value="course">Sort: course</option>
+                </select>
+                {sortKey !== 'default' && <Action type="button" className="btn-chip" aria-label={sortDesc ? 'Sorted descending, switch to ascending' : 'Sorted ascending, switch to descending'} onClick={() => setSortDesc(previous => !previous)}>{sortDesc ? '↓ Descending' : '↑ Ascending'}</Action>}
                 {savedFileCount > 0 && (
                   <Action type="button" className={`btn-chip ${showSavedFiles ? 'is-on' : ''}`} aria-pressed={showSavedFiles} onClick={() => setShowSavedFiles(previous => !previous)}>
                     <Icon name={showSavedFiles ? 'eye-off' : 'eye'} size={15} /> {showSavedFiles ? 'Hide saved' : `Show ${savedFileCount} saved`}
@@ -1265,8 +1287,8 @@ export function App() {
                 </div>
               </div>
               <div className="table">
-                <div className="table-head"><span /><span>Name</span><span>Type</span><span className="num">Size</span><span>Course / section</span><span>State</span></div>
-                {selectableFiles.map(file => {
+                <div className="table-head"><span /><SortHead label="Name" active={sortKey === 'name'} desc={sortDesc} onClick={() => toggleSort('name')} /><SortHead label="Type" active={sortKey === 'type'} desc={sortDesc} onClick={() => toggleSort('type')} /><SortHead label="Size" className="num" active={sortKey === 'size'} desc={sortDesc} onClick={() => toggleSort('size')} /><SortHead label="Course / section" active={sortKey === 'course'} desc={sortDesc} onClick={() => toggleSort('course')} /><span>State</span></div>
+                {sortedFiles.map(file => {
                   const saved = savedInLayout(file.url);
                   const selected = !saved && selectedFileUrls.has(file.url);
                   const size = typeof file.size === 'number' ? file.size : existingByUrl[file.url]?.size;
@@ -1316,14 +1338,14 @@ export function App() {
 
           {stage === 'download' && (
             <Surface className="panel transfer-panel" data-testid="transfer-panel">
-              <div className="transfer-head"><div><span className="transfer-status"><span className="live-dot" /> {isCancellingDownload ? 'Stopping transfer' : 'Live transfer'}</span><h2>{selectedRunFileCount > 0 ? 'Downloading selected content' : 'Saving course instructions'}</h2><p>{isCancellingDownload ? 'Finishing the current file, then keeping everything already saved.' : selectedRunFileCount > 0 ? (runLayout === 'flat' ? 'Files are being saved flat inside their course folders.' : 'Files and course text are being saved with the course folder structure.') : 'Every readable item in the included courses is being saved as Markdown.'}</p></div><div className="transfer-queue"><div className="queue-stat"><strong>{selectedRunFileCount}</strong><span>files queued</span></div>{selectedRunInstructionCourseCount > 0 && <div className="queue-stat queue-stat-instructions"><strong>{selectedRunInstructionCourseCount}</strong><span>courses with text</span></div>}</div></div>
+              <div className="transfer-head"><div><span className="transfer-status"><span className="live-dot" /> {isCancellingDownload ? 'Stopping transfer' : 'Live transfer'}</span><h2>{selectedRunFileCount > 0 ? 'Downloading selected content' : 'Saving course instructions'}</h2><p>{isCancellingDownload ? 'Finishing the current file, then keeping everything already saved.' : selectedRunFileCount > 0 ? (runLayout === 'flat' ? 'Files are being saved flat inside their course folders.' : 'Files and course text are being saved with the course folder structure.') : 'Every readable item in the included courses is being saved as Markdown.'}</p><p className="mono transfer-destination" title="Folder this run is saving into">Saving to {config.downloadDir}</p></div><div className="transfer-queue"><div className="queue-stat"><strong>{selectedRunFileCount}</strong><span>files queued</span></div>{selectedRunInstructionCourseCount > 0 && <div className="queue-stat queue-stat-instructions"><strong>{selectedRunInstructionCourseCount}</strong><span>courses with text</span></div>}</div></div>
               {selectedRunInstructionCourseCount > 0 && instructionProgress && <ProgressBar label={instructionProgress.phase === 'write' ? 'Saving course instructions' : 'Reading course instructions'} value={instructionPercent} detail={instructionProgress.phase === 'write' ? `${instructionProgress.completed} / ${instructionProgress.total} saved` : `${instructionProgress.itemsFound || 0} items found`} subdetail={instructionProgress.currentTitle || instructionProgress.currentSection || instructionProgress.currentCourse || 'Reading every selected course'} dataTestId="instruction-progress" />}
-              {selectedRunFileCount > 0 ? <><ProgressBar label="Overall file progress" value={progressPercent} detail={downloadState.totalKnownBytes > 0 ? `${formatBytes(downloadState.downloadedBytes)} / ${formatBytes(downloadState.totalKnownBytes)}` : `${countProgress} / ${selectedRunFileCount} files`} subdetail={downloadState.failed ? `${downloadState.failed} failed` : 'Transfer in progress'} dataTestId="transfer-progress" /><div className="progress-readout"><strong>{progressPercent.toFixed(1)}%</strong><span>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : 'Calculating speed...'}</span></div><div className="download-stats"><div className="download-stat"><span className="download-stat-icon"><Icon name="gauge" size={17} /></span><span><small>Speed</small><strong>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : '?'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="clock" size={17} /></span><span><small>Estimated time</small><strong>{downloadState.speed > 0 && downloadState.totalKnownBytes > 0 ? eta(remainingKnownBytes / downloadState.speed) : '?'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="file" size={17} /></span><span><small>Unknown size</small><strong>{downloadState.unknownCount}</strong></span></div></div><div className="current-file"><span className="current-file-icon"><Icon name="file" size={17} /></span><span className="current-file-label">Currently saving</span><span className="download-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong className="current-file-name">{downloadState.currentFile || 'Waiting for the first file...'}</strong></div><div className="tallies"><span className="tally tally-ok"><Icon name="check-circle" size={14} /> {downloadState.completed} done</span><span className="tally tally-skip"><Icon name="clock" size={14} /> {downloadState.skipped} skipped</span><span className="tally tally-fail"><Icon name="x-circle" size={14} /> {downloadState.failed} failed</span></div></> : <div className="instruction-only-note"><span className="download-stat-icon"><Icon name="book" size={17} /></span><span><strong>No file attachments selected</strong><small>The course instructions continue independently and will be saved as Markdown.</small></span></div>}
+              {selectedRunFileCount > 0 ? <><ProgressBar label={transfer && transfer.basis === 'files' ? 'Overall progress (by files)' : 'Overall progress'} value={progressPercent} detail={transfer ? (transfer.basis === 'bytes' ? `${formatBytes(transfer.bytes)} / ${formatBytes(transfer.totalBytes)}` : `${transfer.settled} / ${transfer.total} files`) : downloadState.totalKnownBytes > 0 ? `${formatBytes(downloadState.downloadedBytes)} / ${formatBytes(downloadState.totalKnownBytes)}` : `${countProgress} / ${selectedRunFileCount} files`} subdetail={transfer ? `${transfer.settled} of ${transfer.total} files handled${transfer.retrying ? ` · ${transfer.retrying} retrying` : ''}${downloadState.failed ? ` · ${downloadState.failed} failed` : ''}` : (downloadState.failed ? `${downloadState.failed} failed` : 'Starting...')} dataTestId="transfer-progress" /><div className="progress-readout"><strong>{progressPercent.toFixed(1)}%</strong><span>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : (transfer && transfer.settled >= transfer.total ? 'Done' : 'Waiting for data...')}</span></div><div className="download-stats"><div className="download-stat"><span className="download-stat-icon"><Icon name="gauge" size={17} /></span><span><small>Speed</small><strong>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : '–'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="clock" size={17} /></span><span><small>Estimated time</small><strong>{transfer ? (transfer.etaSeconds != null ? eta(transfer.etaSeconds) : transfer.basis === 'files' ? 'Unknown (sizes missing)' : 'Estimating...') : '–'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="file" size={17} /></span><span><small>Unknown size</small><strong>{downloadState.unknownCount}</strong></span></div></div><div className="current-file"><span className="current-file-icon"><Icon name="file" size={17} /></span><span className="current-file-label">Currently saving</span><span className="download-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong className="current-file-name">{transfer && transfer.active.length > 0 ? transfer.active.join('  ·  ') : (downloadState.currentFile || (transfer && transfer.settled >= transfer.total ? 'Finishing up...' : 'Waiting for the first file...'))}</strong></div><div className="tallies"><span className="tally tally-ok"><Icon name="check-circle" size={14} /> {downloadState.completed} done</span><span className="tally tally-skip"><Icon name="clock" size={14} /> {downloadState.skipped} skipped{transfer && transfer.rejected > 0 ? ` (${transfer.rejected} not a supported document)` : ''}</span><span className="tally tally-fail"><Icon name="x-circle" size={14} /> {downloadState.failed} failed</span></div></> : <div className="instruction-only-note"><span className="download-stat-icon"><Icon name="book" size={17} /></span><span><strong>No file attachments selected</strong><small>The course instructions continue independently and will be saved as Markdown.</small></span></div>}
               <div className="btn-row download-footer">{!isCancellingDownload && <Action className="btn-danger" data-testid="download-cancel" onClick={cancelDownload}><Icon name="x" size={16} /> Cancel download</Action>}{isCancellingDownload && <Action className="btn-danger" data-testid="download-cancel" disabled><Icon name="x" size={16} /> Stopping...</Action>}<Action className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</Action><Action className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</Action></div>
             </Surface>
           )}
 
-          {stage === 'summary' && summary && <Surface className="panel summary-panel"><div className="surface-intro"><div><h2>{summary.cancelled ? 'Download cancelled' : 'Download complete'}</h2><p>{summary.cancelled ? 'Everything saved before the stop is kept in your chosen folder.' : 'Files and course instructions were saved in this read-only run.'}</p></div><span className={`state-badge ${summary.cancelled ? 'state-neutral' : 'state-good'}`}>{summary.cancelled ? 'Cancelled' : 'Finished'}</span></div><div className="summary-grid"><div><span>Files saved as</span><strong>{runLayout === 'flat' ? 'Flat' : 'Folders'}</strong></div>{typeof summary.alreadySaved === 'number' && summary.alreadySaved > 0 && <div><span>Already saved</span><strong>{summary.alreadySaved}</strong></div>}<div><span>Courses scanned</span><strong>{summary.coursesSelected}</strong></div><div><span>Files found</span><strong>{summary.filesDiscovered}</strong></div><div><span>Downloaded</span><strong className="text-good">{summary.filesDownloaded}</strong></div><div><span>Skipped</span><strong className="text-warn">{summary.filesSkipped}</strong></div>{typeof summary.filesRejected === 'number' && summary.filesRejected > 0 && <div><span>Rejected</span><strong className="text-warn">{summary.filesRejected}</strong></div>}<div><span>Failed</span><strong className="text-bad">{summary.filesFailed}</strong></div><div><span>Instruction courses</span><strong>{summary.instructionCoursesSelected}</strong></div><div><span>Instructions saved</span><strong className="text-good">{summary.instructionsDownloaded}</strong></div><div><span>Text discovered</span><strong>{summary.instructionsDiscovered}</strong></div></div>{summary.failedFiles.length > 0 && <ul className="checks">{summary.failedFiles.map(file => <li key={`${file.name}-${file.reason}`} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{file.name}: {file.reason}</span></li>)}</ul>}{summary.instructionWarnings.length > 0 && <ul className="checks">{summary.instructionWarnings.map(warning => <li key={warning} className="check check-warn"><span className="check-dot"><Icon name="warning" size={13} /></span><span className="check-msg">{warning}</span></li>)}</ul>}<div className="btn-row"><Action className="btn-primary" onClick={beginDownload}><Icon name="refresh" size={16} /> Run again</Action><Action className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</Action><Action className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</Action></div></Surface>}
+          {stage === 'summary' && summary && <Surface className="panel summary-panel"><div className="surface-intro"><div><h2>{summary.cancelled ? 'Download cancelled' : 'Download complete'}</h2><p>{summary.cancelled ? 'Everything saved before the stop is kept in your chosen folder.' : 'Files and course instructions were saved in this read-only run.'}</p><p className="mono">Saved to {summary.downloadDir || config.downloadDir}{typeof summary.durationMs === 'number' ? ` · transfer took ${formatDuration(summary.durationMs)}` : ''}</p></div><span className={`state-badge ${summary.cancelled ? 'state-neutral' : 'state-good'}`}>{summary.cancelled ? 'Cancelled' : 'Finished'}</span></div><div className="summary-grid"><div><span>Files saved as</span><strong>{runLayout === 'flat' ? 'Flat' : 'Folders'}</strong></div>{typeof summary.alreadySaved === 'number' && summary.alreadySaved > 0 && <div><span>Already saved</span><strong>{summary.alreadySaved}</strong></div>}<div><span>Courses scanned</span><strong>{summary.coursesSelected}</strong></div><div><span>Files found</span><strong>{summary.filesDiscovered}</strong></div><div><span>Downloaded</span><strong className="text-good">{summary.filesDownloaded}</strong></div><div><span>Skipped</span><strong className="text-warn">{summary.filesSkipped}</strong></div>{typeof summary.filesRejected === 'number' && summary.filesRejected > 0 && <div><span>Rejected</span><strong className="text-warn">{summary.filesRejected}</strong></div>}<div><span>Failed</span><strong className="text-bad">{summary.filesFailed}</strong></div><div><span>Instruction courses</span><strong>{summary.instructionCoursesSelected}</strong></div><div><span>Instructions saved</span><strong className="text-good">{summary.instructionsDownloaded}</strong></div><div><span>Text discovered</span><strong>{summary.instructionsDiscovered}</strong></div></div>{summary.failedFiles.length > 0 && <ul className="checks">{summary.failedFiles.map(file => <li key={`${file.name}-${file.reason}`} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{file.name}: {file.reason}</span></li>)}</ul>}{summary.instructionWarnings.length > 0 && <ul className="checks">{summary.instructionWarnings.map(warning => <li key={warning} className="check check-warn"><span className="check-dot"><Icon name="warning" size={13} /></span><span className="check-msg">{warning}</span></li>)}</ul>}<div className="btn-row"><Action className="btn-primary" onClick={beginDownload}><Icon name="refresh" size={16} /> Run again</Action><Action className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</Action><Action className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</Action></div></Surface>}
         </section>}
         </Scene>
       </main>
@@ -1494,4 +1516,14 @@ function fileKind(file: DiscoveredFile): string {
 function CountSummary({ items }: { items: string[] }) { return <div className="count-summary">{items.map(item => <span key={item}>{item}</span>)}</div>; }
 function Stepper({ current }: { current: number }) {
   return <ol className="stepper" aria-label="Download progress">{WIZARD_STEPS.map((label, index) => { const state = index < current ? 'done' : index === current ? 'active' : 'todo'; return <li key={label} className={`step step-${state}`} aria-current={state === 'active' ? 'step' : undefined}><span className="step-dot">{index < current ? <Icon name="check" size={14} /> : index + 1}</span><span className="step-label">{label}</span>{index < WIZARD_STEPS.length - 1 && <span className="step-line" />}</li>; })}</ol>;
+}
+
+
+function SortHead({ label, active, desc, onClick, className = '' }: { label: string; active: boolean; desc: boolean; onClick: () => void; className?: string }) {
+  return (
+    <button type="button" className={`th-sort ${className} ${active ? 'is-active' : ''}`} aria-sort={active ? (desc ? 'descending' : 'ascending') : 'none'} title={`Sort by ${label.toLowerCase()}`} onClick={onClick}>
+      {label}
+      <span className="th-arrow" aria-hidden="true">{active ? (desc ? '↓' : '↑') : ''}</span>
+    </button>
+  );
 }
