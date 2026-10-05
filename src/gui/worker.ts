@@ -170,6 +170,7 @@ async function startWorkflow(payload: WorkerCommandMap['startWorkflow'] = {}): P
     'download:skip',
     'download:rejected',
     'download:cancel',
+    'transfer:progress',
     'summary:ready',
   ];
 
@@ -220,7 +221,14 @@ async function discoverFiles(payload: WorkerCommandMap['discoverFiles']): Promis
 async function download(payload: WorkerCommandMap['download']): Promise<WorkerResponseMap['download']> {
   if (!workflow) throw new Error('Workflow not started');
   const activeWorkflow = workflow;
-  const selectedFiles = payload?.files || [];
+  const downloadStartedAt = Date.now();
+  let selectedFiles = payload?.files || [];
+  const requestedDir = typeof payload?.downloadDir === 'string' ? payload.downloadDir.trim() : '';
+  if (requestedDir) {
+    const reroot = activeWorkflow.retargetDownloadDir(requestedDir);
+    selectedFiles = selectedFiles.map(file => ({ ...file, savePath: reroot(file.savePath) }));
+    runSummaryContext.downloadDir = activeWorkflow.getDownloadDir();
+  }
   const instructionCourses = payload?.instructionCourses || [];
   const layout: DownloadLayout = payload?.layout === 'flat' ? 'flat' : 'hierarchy';
   // Files the chosen layout already held when the run started (counted per
@@ -256,6 +264,8 @@ async function download(payload: WorkerCommandMap['download']): Promise<WorkerRe
     instructionsDownloaded: runState.instructionsDownloaded,
     instructionWarnings: runState.instructionWarnings,
     cancelled: activeWorkflow.isCancelled(),
+    downloadDir: activeWorkflow.getDownloadDir(),
+    durationMs: Date.now() - downloadStartedAt,
   };
 
   writeSummarySafely(buildRunSummaryReport());

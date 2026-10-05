@@ -88,6 +88,7 @@ export class BlackboxDownloader extends EventEmitter {
     this.downloader.on('download:error', (data) => this.emit('download:error', data));
     this.downloader.on('download:skip', (data) => this.emit('download:skip', data));
     this.downloader.on('download:rejected', (data) => this.emit('download:rejected', data));
+    this.downloader.on('transfer:progress', (data) => this.emit('transfer:progress', data));
     this.downloader.on('files:metadata:progress', (data) => this.emit('files:metadata:progress', data));
     this.downloader.on('files:metadata:complete', (data) => this.emit('files:metadata:complete', data));
 

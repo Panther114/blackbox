@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The download history is now a small JSON file instead of a SQLite database, removing the native module. Existing downloads on disk are still detected.
 - The installer is Windows-only and about 20% smaller (en-US locales only, unused Chromium components removed, runtime dependencies cut to what the app uses).
 
+### Fixed
+- A download folder changed in Settings after the scan was ignored, so files landed in the old folder while the new one stayed empty. The transfer now saves into the folder currently chosen in Settings, and the transfer screen and the summary show exactly where the files went (and how long the transfer took).
+- Progress is now computed by the app, not guessed on screen: skipped, rejected and failed files count as handled, the bar never shows 100% while a file is still running, retried bytes are discarded instead of double counted, and speed and time left show only when they can be trusted. It says when it is counting files instead of bytes.
+
+### Changed
+- Course text is off by default; tick the courses you want it for.
+- File lists can be sorted by name, type, size or course (headers or the Sort menu). The course settings are now labelled "Course filter" and describe what they hide.
+
 ### Removed
 - The command-line/terminal interface, MCP server, Docker setup, source launchers, the legacy Python tool, the unused AI module and the Obscura test backend. macOS and Linux packages are no longer built.
 

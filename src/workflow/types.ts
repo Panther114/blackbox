@@ -40,6 +40,10 @@ export interface WorkflowSummary {
   instructionWarnings: string[];
   /** True when the user stopped the run before it finished on its own. */
   cancelled?: boolean;
+  /** The folder the files and course text were saved into. */
+  downloadDir?: string;
+  /** How long the transfer step took, in milliseconds. */
+  durationMs?: number;
 }
 
 export interface DiscoverCoursesOptions {

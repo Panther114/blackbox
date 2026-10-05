@@ -32,6 +32,8 @@ export interface WorkerCommandMap {
     instructionCourses?: Course[];
     /** Folder structure for the downloaded files. Defaults to 'hierarchy'. */
     layout?: DownloadLayout;
+    /** The folder currently chosen in Settings; the run saves here even if it changed after the scan. */
+    downloadDir?: string;
   };
   downloadCancel: Record<string, never>;
   automationRun: {
