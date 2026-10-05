@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   root: path.resolve(__dirname, 'src/gui/renderer'),
   base: './',
-  publicDir: path.resolve(__dirname, 'assets'),
+  publicDir: path.resolve(__dirname, 'src/gui/renderer/public'),
   server: {
     host: '127.0.0.1',
     port: 5173,

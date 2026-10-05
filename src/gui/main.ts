@@ -1,7 +1,8 @@
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
-import { app, BrowserWindow, dialog, ipcMain, shell, IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, IpcMainInvokeEvent } from 'electron';
 import { compactConfigOverrides, getConfig } from '../config';
 import { BlackboardAuth } from '../auth';
 import { isBrowserProfileInUse } from '../auth/browserProfile';
@@ -19,10 +20,17 @@ import {
 } from './workerProtocol';
 import { ensureAppPaths, getAppPaths } from '../appPaths';
 import { SecureDesktopStore, normalizeBlockedCourses } from './secureStore';
+import { getDesktopPaths } from './desktopPaths';
 import { checkForUpdates, downloadUpdate, getUpdateState, initializeUpdater, installUpdate } from './updater';
 import { AgentService } from '../agent/service';
 import { DownloadDatabase } from '../database';
 import { clearDownloadDirectory } from '../downloadDirectory';
+import {
+  clearAutomationDownloadDir,
+  loadAutomationSettings,
+  saveAutomationSettings,
+  validateAutomationSettings,
+} from '../automation/settings';
 
 const WORKER_NATIVE_MODULE_ERROR =
   'GUI worker failed to start because a packaged native dependency could not load. Reinstall the application and run Diagnostics.';
@@ -76,22 +84,13 @@ if (!hasSingleInstanceLock) {
   });
 }
 
-function startPackagedMcpServer(): void {
-  const serverPath = path.resolve(__dirname, '..', 'mcp', 'server.js');
-  const child = spawn(process.execPath, [serverPath], {
-    stdio: 'inherit',
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-  });
-  child.once('error', error => {
-    console.error('Failed to start the MCP server:', error);
-    app.exit(1);
-  });
-  child.once('exit', code => app.exit(code || 0));
-}
-
 const pendingWorkerRequests = new Map<
   string,
-  { resolve: (value: unknown) => void; reject: (reason: Error) => void }
+  {
+    resolve: (value: unknown) => void;
+    reject: (reason: Error) => void;
+    command?: WorkerCommandType;
+  }
 >();
 
 function isDevGui(): boolean {
@@ -123,14 +122,46 @@ function sendWorkflowEvent(type: string, payload: unknown): void {
   }
 }
 
+/** Windows 11 22H2+ can draw a Mica material behind the window; older builds get a solid surface. */
+function supportsMica(): boolean {
+  return process.platform === 'win32' && Number(os.release().split('.')[2]) >= 22621;
+}
+
+/**
+ * Developer aid: `--capture=<file.png> [--size=WxH]` renders the window once,
+ * saves a screenshot of Blackbox's own page and exits. Used for visual review.
+ */
+function captureForReview(): void {
+  const target = process.argv.find(arg => arg.startsWith('--capture='))?.slice('--capture='.length);
+  const window = mainWindow;
+  if (!target || !window) return;
+  const captureDelay = Number(process.argv.find(arg => arg.startsWith('--capture-after='))?.slice('--capture-after='.length)) || 1600;
+  const size = process.argv.find(arg => arg.startsWith('--size='))?.slice('--size='.length).split('x').map(Number);
+  if (size && size.length === 2 && size.every(Number.isFinite)) window.setContentSize(size[0], size[1]);
+  window.webContents.once('did-finish-load', () => {
+    setTimeout(() => {
+      window.webContents
+        .capturePage()
+        .then(image => fs.writeFileSync(target, image.toPNG()))
+        .finally(() => app.exit(0));
+    }, captureDelay);
+  });
+}
+
 function createWindow(): void {
   const icon = appIconPath();
+  const mica = supportsMica() && !process.argv.includes('--no-material');
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    width: 1120,
+    height: 760,
     minWidth: 980,
     minHeight: 680,
+    show: false,
     title: `Blackbox v${appVersion()}`,
+    backgroundColor: mica ? '#00000000' : '#101216',
+    ...(mica ? { backgroundMaterial: 'mica' as const } : {}),
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#00000000', symbolColor: '#c9cdd8', height: 44 },
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -138,37 +169,47 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      spellcheck: false,
+      backgroundThrottling: !process.argv.some(arg => arg.startsWith('--capture=')),
     },
   });
 
-  if (isDevGui()) {
-    mainWindow.loadURL(`http://127.0.0.1:5173${isDemoGui() ? '/?demo=1' : ''}`);
-  } else {
-    mainWindow.loadFile(path.resolve(__dirname, 'renderer/index.html'), {
-      query: isDemoGui() ? { demo: '1' } : undefined,
-    });
+  const query: Record<string, string> = { material: mica ? 'mica' : 'none' };
+  const dots = process.argv.find(arg => arg.startsWith('--dots='))?.slice('--dots='.length);
+  if (dots) query.dots = dots;
+  if (process.argv.includes('--forcefocus')) query.forcefocus = '1';
+  if (isDemoGui()) {
+    query.demo = '1';
+    const screen = process.argv.find(arg => arg.startsWith('--screen='));
+    if (screen) query.screen = screen.slice('--screen='.length);
   }
+  if (isDevGui()) {
+    mainWindow.loadURL(`http://127.0.0.1:5173/?${new URLSearchParams(query)}`);
+  } else {
+    mainWindow.loadFile(path.resolve(__dirname, 'renderer/index.html'), { query });
+  }
+  // A review capture renders off-screen: the window is never shown or focused.
+  if (!process.argv.some(arg => arg.startsWith('--capture='))) mainWindow.once('ready-to-show', () => mainWindow?.show());
+  captureForReview();
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
 }
 
 function isNativeModuleAbiError(message: string): boolean {
-  return (
-    message.includes('NODE_MODULE_VERSION') ||
-    message.includes('ERR_DLOPEN_FAILED') ||
-    message.includes('better_sqlite3') ||
-    message.includes('better-sqlite3')
-  );
+  return message.includes('NODE_MODULE_VERSION') || message.includes('ERR_DLOPEN_FAILED');
 }
 
-function normalizeWorkerError(message: string): string {
+function normalizeWorkerError(message: string, command?: WorkerCommandType): string {
   const trimmed = message
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
     .trim();
   if (/No automation browser is available|Executable doesn't exist|Looks like Playwright was just installed|playwright.*browser.*(missing|not installed)/i.test(trimmed)) {
     return 'No automation browser is installed. Install Microsoft Edge or Playwright Chromium, then retry.';
   }
-  if (/page\.goto:\s*Timeout|navigation timeout|Timeout \d+ms exceeded.*waiting until "commit"|ERR_CONNECTION_(REFUSED|TIMED_OUT|RESET)|ERR_NAME_NOT_RESOLVED|ENETUNREACH|ECONNREFUSED|ETIMEDOUT/i.test(trimmed)) {
+  // The "login page" wording is only accurate for the workflow-start phase,
+  // where the browser is launched and the login page is opened. The same
+  // network error during file discovery or download is not a login problem.
+  if (command === 'startWorkflow' && /page\.goto:\s*Timeout|navigation timeout|Timeout \d+ms exceeded.*waiting until "commit"|ERR_CONNECTION_(REFUSED|TIMED_OUT|RESET)|ERR_NAME_NOT_RESOLVED|ENETUNREACH|ECONNREFUSED|ETIMEDOUT/i.test(trimmed)) {
     return 'Blackboard did not respond while opening the login page. Check your connection or VPN, then retry.';
   }
   if (isNativeModuleAbiError(trimmed)) {
@@ -207,7 +248,7 @@ function handleWorkerMessage(message: WorkerOutgoingMessage): void {
     if (message.ok) {
       pending.resolve(message.data);
     } else {
-      pending.reject(new Error(normalizeWorkerError(message.error || 'Worker command failed')));
+      pending.reject(new Error(normalizeWorkerError(message.error || 'Worker command failed', pending.command)));
     }
     return;
   }
@@ -326,6 +367,7 @@ function sendWorkerCommand<T extends WorkerCommandType>(
     pendingWorkerRequests.set(id, {
       resolve: value => resolve(value as WorkerResponseMap[T]),
       reject,
+      command,
     });
 
     activeWorker.stdin.write(message + '\n', writeError => {
@@ -346,11 +388,15 @@ async function invokeWorkerCommand<T extends WorkerCommandType>(
 
 async function stopGuiWorker(): Promise<void> {
   if (!worker) return;
-  try {
-    await sendWorkerCommand('shutdown', {});
-  } catch {
-    // no-op
-  }
+  // Worker commands are serialized behind an in-flight download, so a plain
+  // shutdown command can queue for minutes during a long run. Give it a short
+  // window to exit cleanly, then force-kill so operations like clearing the
+  // download directory never hang the UI.
+  const gracefulShutdown = sendWorkerCommand('shutdown', {}).catch(() => undefined);
+  await Promise.race([
+    gracefulShutdown,
+    new Promise(resolve => setTimeout(resolve, 3_000)),
+  ]);
 
   if (worker && !worker.killed) {
     worker.kill();
@@ -467,8 +513,24 @@ async function runDoctor(loginTest: boolean): Promise<DoctorCheck[]> {
   return checks;
 }
 
+let autoUpdateTimers: Array<NodeJS.Timeout> = [];
+
+/**
+ * (Re)schedule automatic update checks. Called at startup and again whenever
+ * the autoCheckUpdates setting is saved, so toggling the setting takes effect
+ * immediately instead of requiring an app restart.
+ */
+function scheduleAutoUpdateChecks(enabled: boolean): void {
+  for (const timer of autoUpdateTimers) clearTimeout(timer);
+  autoUpdateTimers = [];
+  if (!enabled) return;
+  autoUpdateTimers.push(setTimeout(() => void checkForUpdates().catch(() => undefined), 10_000));
+  autoUpdateTimers.push(setInterval(() => void checkForUpdates().catch(() => undefined), 6 * 60 * 60 * 1000) as unknown as NodeJS.Timeout);
+}
+
 async function initializeDesktopApp(): Promise<void> {
   app.setAppUserModelId('com.panther114.blackbox');
+  Menu.setApplicationMenu(null);
   const appPaths = ensureAppPaths();
   desktopStore = new SecureDesktopStore(appPaths);
   let legacyBrowserProfileSource: string | undefined;
@@ -487,10 +549,6 @@ async function initializeDesktopApp(): Promise<void> {
   } catch (error) {
     recordStartupFailure(error);
   }
-  if (process.argv.includes('--mcp')) {
-    startPackagedMcpServer();
-    return;
-  }
   createWindow();
   if (legacyBrowserProfileSource) {
     mainWindow?.webContents.once('did-finish-load', () => {
@@ -499,10 +557,7 @@ async function initializeDesktopApp(): Promise<void> {
   }
   initializeUpdater(state => sendWorkflowEvent('update:state', state));
   const settings = desktopStore.loadSettings();
-  if (settings.autoCheckUpdates) {
-    setTimeout(() => void checkForUpdates().catch(() => undefined), 10_000);
-    setInterval(() => void checkForUpdates().catch(() => undefined), 6 * 60 * 60 * 1000);
-  }
+  scheduleAutoUpdateChecks(settings.autoCheckUpdates);
 
   ipcMain.handle('app:get-version', event => { assertTrustedSender(event); return appVersion(); });
 
@@ -537,10 +592,20 @@ async function initializeDesktopApp(): Promise<void> {
       autoCheckUpdates: payload.autoCheckUpdates === undefined ? current.autoCheckUpdates : Boolean(payload.autoCheckUpdates),
       blockedCourses: normalizeBlockedCourses(payload.blockedCourses ?? current.blockedCourses),
     });
-    const password = String(payload.password || '');
-    if (password) await desktopStore.setPassword(password);
+    // `undefined` keeps the stored password; an explicitly empty string clears
+    // it. Conflating the two made it impossible to remove a saved password.
+    if (payload.password === undefined) {
+      // keep stored password
+    } else if (String(payload.password) === '') {
+      desktopStore.clearPassword();
+    } else {
+      await desktopStore.setPassword(String(payload.password));
+    }
     await desktopStore.applyToEnvironment();
+    scheduleAutoUpdateChecks(desktopStore.loadSettings().autoCheckUpdates);
 
+    let loginTestPassed: boolean | undefined;
+    let loginTestError: string | undefined;
     if (payload.testLogin) {
       const cfg = getConfig(compactConfigOverrides({ headless: payload.headless }));
       let auth: BlackboardAuth | null = null;
@@ -548,12 +613,19 @@ async function initializeDesktopApp(): Promise<void> {
         auth = new BlackboardAuth(cfg);
         await auth.launchBrowser();
         await auth.login();
+        loginTestPassed = true;
+      } catch (error) {
+        loginTestPassed = false;
+        loginTestError = error instanceof Error ? error.message : String(error);
       } finally {
         if (auth) await auth.close();
       }
     }
 
-    return { ok: true };
+    // Settings are always saved before the login test runs; the structured
+    // result lets the UI say "saved, but the test failed" instead of implying
+    // nothing was persisted.
+    return { ok: true, loginTestPassed, ...(loginTestError ? { loginTestError } : {}) };
   });
 
   ipcMain.handle('setup:reset', async event => {
@@ -585,9 +657,7 @@ async function initializeDesktopApp(): Promise<void> {
     const blockedCourses = desktopStore.loadSettings().blockedCourses;
     return invokeWorkerCommand('discoverCourses', {
       filterPattern: payload?.filterPattern,
-      excludeCourseIds: payload?.includeBlocked
-        ? []
-        : blockedCourses.map(course => course.id),
+      excludeCourseIds: blockedCourses.map(course => course.id),
     });
   });
 
@@ -603,7 +673,15 @@ async function initializeDesktopApp(): Promise<void> {
     return invokeWorkerCommand('download', {
       files: payload?.files || [],
       instructionCourses: payload?.instructionCourses || [],
+      layout: payload?.layout === 'flat' ? 'flat' : 'hierarchy',
+      downloadDir: desktopStore.loadSettings().downloadDir,
     });
+  });
+
+  ipcMain.handle('workflow:cancel-download', async event => {
+    assertTrustedSender(event);
+    if (!worker) return { cancelled: false, running: false };
+    return invokeWorkerCommand('downloadCancel', {});
   });
 
   ipcMain.handle('workflow:cleanup', async event => {
@@ -614,18 +692,12 @@ async function initializeDesktopApp(): Promise<void> {
 
   ipcMain.handle('paths:get', event => {
     assertTrustedSender(event);
-    const config = getConfig();
-    return {
-      downloads: path.resolve(config.downloadDir),
-      logs: path.resolve(path.dirname(config.logFile)),
-      summary: path.join(getAppPaths().logsDir, 'latest-summary.txt'),
-    };
+    return getDesktopPaths(desktopStore.loadSettings(), getAppPaths());
   });
 
   ipcMain.handle('path:open-downloads', async event => {
     assertTrustedSender(event);
-    const config = getConfig();
-    return shell.openPath(path.resolve(config.downloadDir));
+    return shell.openPath(getDesktopPaths(desktopStore.loadSettings(), getAppPaths()).downloads);
   });
 
   ipcMain.handle('path:clear-downloads', async (event, payload) => {
@@ -653,8 +725,7 @@ async function initializeDesktopApp(): Promise<void> {
 
   ipcMain.handle('path:open-logs', async event => {
     assertTrustedSender(event);
-    const config = getConfig();
-    return shell.openPath(path.resolve(path.dirname(config.logFile)));
+    return shell.openPath(getDesktopPaths(desktopStore.loadSettings(), getAppPaths()).logs);
   });
 
   ipcMain.handle('path:choose-download-directory', async event => {
@@ -667,6 +738,75 @@ async function initializeDesktopApp(): Promise<void> {
     };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0] || null;
+  });
+
+  // -------------------------------------------------------------------------
+  // Automation (independent settings, download dir and run log)
+  // -------------------------------------------------------------------------
+
+  ipcMain.handle('automation:load-settings', event => {
+    assertTrustedSender(event);
+    return {
+      settings: loadAutomationSettings(),
+      normalDownloadDir: path.resolve(desktopStore.loadSettings().downloadDir),
+    };
+  });
+
+  ipcMain.handle('automation:save-settings', (event, payload) => {
+    assertTrustedSender(event);
+    const currentNormalDownloadDir = desktopStore.loadSettings().downloadDir;
+    const saved = saveAutomationSettings(
+      {
+        gnumbers: Array.isArray(payload?.gnumbers) ? payload.gnumbers.map((value: unknown) => String(value)) : [],
+        downloadDir: String(payload?.downloadDir || ''),
+        maxFileSizeBytes: Number(payload?.maxFileSizeBytes),
+        excludedExtensions: Array.isArray(payload?.excludedExtensions)
+          ? payload.excludedExtensions.map((value: unknown) => String(value))
+          : [],
+      },
+      currentNormalDownloadDir,
+    );
+    return { ok: true, settings: saved };
+  });
+
+  ipcMain.handle('automation:choose-directory', async event => {
+    assertTrustedSender(event);
+    const current = loadAutomationSettings().downloadDir;
+    const options = {
+      defaultPath: path.resolve(current),
+      properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
+      title: 'Choose the automation download directory',
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0] || null;
+  });
+
+  ipcMain.handle('automation:open-directory', async event => {
+    assertTrustedSender(event);
+    return shell.openPath(path.resolve(loadAutomationSettings().downloadDir));
+  });
+
+  ipcMain.handle('automation:start-run', async event => {
+    assertTrustedSender(event);
+    const settings = loadAutomationSettings();
+    const normalDownloadDir = desktopStore.loadSettings().downloadDir;
+    const validation = validateAutomationSettings(settings, normalDownloadDir);
+    if (!validation.ok) throw new Error(validation.error);
+    return invokeWorkerCommand('automationRun', { settings, normalDownloadDir });
+  });
+
+  ipcMain.handle('automation:cancel-run', async event => {
+    assertTrustedSender(event);
+    // Cooperative cancel: sessions finish their current step, release their
+    // course claims and shut down. Downloads on disk are never wiped by this.
+    return invokeWorkerCommand('automationCancel', {});
+  });
+
+  ipcMain.handle('automation:clear-downloads', async event => {
+    assertTrustedSender(event);
+    const settings = loadAutomationSettings();
+    const normalDownloadDir = desktopStore.loadSettings().downloadDir;
+    return clearAutomationDownloadDir(settings.downloadDir, normalDownloadDir);
   });
 
   ipcMain.handle('settings:scan-courses', async (event, payload) => {
@@ -703,7 +843,7 @@ async function initializeDesktopApp(): Promise<void> {
   ipcMain.handle('update:get-state', event => { assertTrustedSender(event); return getUpdateState(); });
   ipcMain.handle('update:check', async event => { assertTrustedSender(event); return checkForUpdates(); });
   ipcMain.handle('update:download', async event => { assertTrustedSender(event); await downloadUpdate(); return getUpdateState(); });
-  ipcMain.handle('update:install', event => { assertTrustedSender(event); installUpdate(); return { ok: true }; });
+  ipcMain.handle('update:install', async event => { assertTrustedSender(event); await installUpdate(); return { ok: true }; });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

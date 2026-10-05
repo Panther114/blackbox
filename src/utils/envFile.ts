@@ -10,7 +10,20 @@ export function parseEnv(content: string): EnvMap {
     const idx = trimmed.indexOf('=');
     if (idx <= 0) continue;
     const key = trimmed.slice(0, idx).trim();
-    const value = trimmed.slice(idx + 1);
+    let value = trimmed.slice(idx + 1).trim();
+    // Strip inline comments only for unquoted values, and unwrap matching
+    // quotes so dotenv-style lines such as BB_PASSWORD="secret" parse the
+    // same way dotenv would.
+    const quote = value.startsWith('"') || value.startsWith("'") ? value[0] : null;
+    if (quote) {
+      const end = value.indexOf(quote, 1);
+      if (end > 0) {
+        value = value.slice(1, end);
+      }
+    } else {
+      const commentIdx = value.indexOf(' #');
+      if (commentIdx >= 0) value = value.slice(0, commentIdx).trim();
+    }
     out[key] = value;
   }
   return out;
@@ -28,7 +41,9 @@ export function mergeEnvContent(content: string, values: EnvMap): string {
     const regex = new RegExp(`^${key}=.*$`, 'm');
     const line = `${key}=${value}`;
     if (regex.test(merged)) {
-      merged = merged.replace(regex, line);
+      // Use a replacement function: a plain string replacement would treat
+      // `$&`/`$'` sequences (common in passwords) as patterns.
+      merged = merged.replace(regex, () => line);
     } else {
       merged += (merged.endsWith('\n') ? '' : '\n') + line + '\n';
     }

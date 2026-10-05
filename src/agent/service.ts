@@ -56,8 +56,13 @@ export class AgentService {
       await downloader.initialize();
       return await downloader.getCourses();
     } finally {
-      await downloader?.cleanup();
-      release();
+      // Release the lock even when cleanup() throws, otherwise the process
+      // stays permanently busy after a single failed browser close.
+      try {
+        await downloader?.cleanup();
+      } finally {
+        release();
+      }
     }
   }
 
@@ -76,8 +81,21 @@ export class AgentService {
       let attachments: AgentAttachment[] = result.attachments;
       if (options.includeFiles) {
         const files = await downloader.fetchFileMetadata(result.files);
-        await downloader.downloadSelected(files);
-        attachments = attachments.map(attachment => ({ ...attachment, status: 'downloaded', localPath: path.join(config.downloadDir, attachment.courseName, attachment.sectionName, attachment.name) }));
+        const outcomes = await downloader.downloadSelected(files);
+        // Report the real per-file result; a failed or rejected download must
+        // never be described as "downloaded" in the manifest.
+        attachments = attachments.map(attachment => {
+          const outcome = outcomes[attachment.url]?.status;
+          const status: AgentAttachment['status'] =
+            outcome === 'completed'
+              ? 'downloaded'
+              : outcome === 'failed'
+                ? 'failed'
+                : outcome === 'skipped' || outcome === 'rejected'
+                  ? 'skipped'
+                  : 'pending';
+          return { ...attachment, status };
+        });
       }
       const exportResult = writeAgentExport({
         outputDir: options.outputDir || config.downloadDir,
@@ -89,8 +107,11 @@ export class AgentService {
       });
       return { manifestPath: exportResult.manifestPath, ...exportResult.manifest.summary, warnings: exportResult.manifest.warnings };
     } finally {
-      await downloader?.cleanup();
-      release();
+      try {
+        await downloader?.cleanup();
+      } finally {
+        release();
+      }
     }
   }
 }

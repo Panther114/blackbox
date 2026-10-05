@@ -20,6 +20,7 @@ export type WorkflowEventName =
   | 'download:complete'
   | 'download:error'
   | 'download:skip'
+  | 'download:rejected'
   | 'summary:ready';
 
 export interface WorkflowEvent<T = unknown> {

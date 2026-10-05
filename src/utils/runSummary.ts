@@ -10,6 +10,9 @@ export interface RunSummaryReport {
   filesSelected: number;
   filesDownloaded: number;
   filesSkipped: number;
+  /** Files the chosen layout already held before the run started. */
+  filesAlreadySaved?: number;
+  filesRejected: number;
   filesFailed: number;
   failedFiles: Array<{ name: string; reason: string }>;
   instructionCoursesSelected?: number;
@@ -35,6 +38,8 @@ export function writeRunSummary(report: RunSummaryReport): void {
     `files selected: ${report.filesSelected}`,
     `files downloaded: ${report.filesDownloaded}`,
     `files skipped: ${report.filesSkipped}`,
+    `files already saved before the run: ${report.filesAlreadySaved || 0}`,
+    `files rejected: ${report.filesRejected}`,
     `files failed: ${report.filesFailed}`,
     `instruction courses selected: ${report.instructionCoursesSelected || 0}`,
     `instructions discovered: ${report.instructionsDiscovered || 0}`,
@@ -74,6 +79,8 @@ export function writeRunSummary(report: RunSummaryReport): void {
         filesSelected: report.filesSelected,
         filesDownloaded: report.filesDownloaded,
         filesSkipped: report.filesSkipped,
+        filesAlreadySaved: report.filesAlreadySaved || 0,
+        filesRejected: report.filesRejected,
         filesFailed: report.filesFailed,
         failedFiles: report.failedFiles,
         instructionCoursesSelected: report.instructionCoursesSelected || 0,

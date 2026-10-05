@@ -1,7 +1,8 @@
 import { EventEmitter } from 'events';
 import { BlackboxDownloader } from '../index';
-import { Config, Course, DiscoveredFile } from '../types';
-import { isDownloadPresent, scanDownloadDirectory } from '../downloadDirectory';
+import { Config, Course, DiscoveredFile, DownloadLayout, ExistingFileState } from '../types';
+import { courseFolderForSavePath, normalizeDownloadPath, pruneEmptyDirectories } from '../downloadDirectory';
+import path from 'path';
 import { writeManualInstructions } from '../instructions/exporter';
 import { log } from '../utils/logger';
 import {
@@ -11,32 +12,72 @@ import {
   InstructionDownloadResult,
 } from './types';
 
-function filterAlreadyDownloaded(
+/** Count the files each layout already holds, for the selection screen. */
+function alreadySavedCounts(
   files: DiscoveredFile[],
-  downloadDir: string,
-): { files: DiscoveredFile[]; skippedOnDisk: number } {
-  const result: DiscoveredFile[] = [];
-  let skippedOnDisk = 0;
-  const indexedFiles = scanDownloadDirectory(downloadDir);
-
+  existing: Record<string, ExistingFileState>,
+): { hierarchy: number; flat: number; any: number } {
+  let hierarchy = 0;
+  let flat = 0;
+  let any = 0;
   for (const file of files) {
-    if (isDownloadPresent(indexedFiles, file.savePath, file.name)) {
-      skippedOnDisk++;
-    } else {
-      result.push(file);
-    }
+    const state = existing[file.url];
+    if (!state) continue;
+    if (state.hierarchy) hierarchy += 1;
+    if (state.flat) flat += 1;
+    if (state.hierarchy || state.flat) any += 1;
   }
-
-  return { files: result, skippedOnDisk };
+  return { hierarchy, flat, any };
 }
 
 export class DownloadWorkflow extends EventEmitter {
   private readonly config: Config;
   private blackboxDownloader: BlackboxDownloader | null = null;
+  private cancelled = false;
 
   constructor(config: Config) {
     super();
     this.config = config;
+  }
+
+  /**
+   * Stop the running workflow: in-flight downloads are aborted and every
+   * remaining step (instructions, queued files) is skipped. Anything already
+   * written to the download directory is kept.
+   */
+  cancel(): void {
+    if (this.cancelled) return;
+    this.cancelled = true;
+    log.warn('Download cancelled by user.');
+    this.blackboxDownloader?.cancel();
+    this.emit('download:cancel', {});
+  }
+
+  isCancelled(): boolean {
+    return this.cancelled;
+  }
+
+  /** The folder this run saves into. */
+  getDownloadDir(): string {
+    return this.config.downloadDir;
+  }
+
+  /**
+   * Point the run at the folder currently chosen in Settings. Paths were fixed
+   * when the courses were scanned, so a folder changed during or after the scan
+   * would otherwise be ignored and the files would land in the old one. Returns
+   * a function that re-roots an already discovered save path.
+   */
+  retargetDownloadDir(newDir: string): (savePath: string) => string {
+    const oldDir = path.resolve(this.config.downloadDir);
+    const target = path.resolve(newDir);
+    if (normalizeDownloadPath(oldDir) === normalizeDownloadPath(target)) return savePath => savePath;
+    log.info(`Download folder changed during the run: saving to ${target} instead of ${oldDir}.`);
+    this.config.downloadDir = target;
+    return savePath => {
+      const relative = path.relative(oldDir, savePath);
+      return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? path.join(target, relative) : savePath;
+    };
   }
 
   async initialize(): Promise<void> {
@@ -48,6 +89,8 @@ export class DownloadWorkflow extends EventEmitter {
     this.blackboxDownloader.on('download:complete', data => this.emit('download:complete', data));
     this.blackboxDownloader.on('download:error', data => this.emit('download:error', data));
     this.blackboxDownloader.on('download:skip', data => this.emit('download:skip', data));
+    this.blackboxDownloader.on('download:rejected', data => this.emit('download:rejected', data));
+    this.blackboxDownloader.on('transfer:progress', data => this.emit('transfer:progress', data));
     this.blackboxDownloader.on('files:discovery:progress', data => this.emit('files:discovery:progress', data));
     this.blackboxDownloader.on('files:metadata:progress', data => this.emit('files:metadata:progress', data));
     this.blackboxDownloader.on('files:metadata:complete', data => this.emit('files:metadata:complete', data));
@@ -88,25 +131,44 @@ export class DownloadWorkflow extends EventEmitter {
     const discovered = await this.blackboxDownloader.discoverAllFiles(selectedCourses);
     this.emit('files:discovery:complete', { filesDiscovered: discovered.length });
 
-    const enriched = await this.blackboxDownloader.fetchFileMetadata(discovered);
-    const filtered = filterAlreadyDownloaded(enriched, this.config.downloadDir);
+    // Ask the disk first and only then spend a HEAD request per file: a course
+    // that is already fully saved needs no metadata at all, which is what makes
+    // re-scanning a downloaded course fast.
+    const diskState = this.blackboxDownloader.inspectExisting(discovered);
+    const pending = discovered.filter(
+      file => !diskState[file.url]?.hierarchy && !diskState[file.url]?.flat,
+    );
+    const enrichedPending = await this.blackboxDownloader.fetchFileMetadata(pending);
+    const enrichedByUrl = new Map(enrichedPending.map(file => [file.url, file]));
+    const enriched = discovered
+      .map(file => enrichedByUrl.get(file.url))
+      .filter((file): file is DiscoveredFile => file !== undefined);
+
+    // Per-layout "already saved" state instead of one shared skip filter: the
+    // selection screen decides what to hide for the layout the user picked.
+    const existing = { ...diskState, ...this.blackboxDownloader.inspectExisting(enriched) };
+    const counts = alreadySavedCounts(discovered, existing);
     this.emit('files:ready', {
       filesDiscovered: discovered.length,
-      filesSelectable: filtered.files.length,
-      skippedOnDisk: filtered.skippedOnDisk,
+      filesSelectable: discovered.length - counts.any,
+      skippedOnDisk: counts.any,
+      alreadySavedHierarchy: counts.hierarchy,
+      alreadySavedFlat: counts.flat,
     });
 
     return {
       discovered,
       enriched,
-      files: filtered.files,
-      skippedOnDisk: filtered.skippedOnDisk,
+      files: enriched,
+      skippedOnDisk: counts.any,
+      existing,
     };
   }
 
   async downloadSelected(
     files: DiscoveredFile[],
     instructionCourses: Course[] = [],
+    layout: DownloadLayout = 'hierarchy',
   ): Promise<InstructionDownloadResult> {
     if (!this.blackboxDownloader) {
       throw new Error('Workflow not initialized. Call initialize() first.');
@@ -119,7 +181,7 @@ export class DownloadWorkflow extends EventEmitter {
       instructionWarnings: [],
     };
 
-    if (instructionCourses.length > 0) {
+    if (instructionCourses.length > 0 && !this.cancelled) {
       this.emit('instructions:discovery:start', { courseCount: instructionCourses.length });
       const discovered = await this.blackboxDownloader.discoverInstructions(instructionCourses, progress => {
         this.emit('instructions:discovery:progress', progress);
@@ -130,6 +192,11 @@ export class DownloadWorkflow extends EventEmitter {
         instructionsDiscovered: discovered.items.length,
         warnings: discovered.warnings,
       });
+
+      if (this.cancelled) {
+        log.warn('Cancelled before saving course instructions; nothing was written.');
+        return instructionResult;
+      }
 
       this.emit('instructions:write:start', { instructionsDiscovered: discovered.items.length });
       const written = writeManualInstructions({
@@ -146,8 +213,19 @@ export class DownloadWorkflow extends EventEmitter {
       });
     }
 
+    if (this.cancelled) {
+      log.warn('Download cancelled: skipping the remaining files.');
+      return instructionResult;
+    }
+
     if (files.length > 0) {
-      await this.blackboxDownloader.downloadSelected(files);
+      log.info(
+        layout === 'flat'
+          ? `Saving ${files.length} files flat inside their course folders.`
+          : `Saving ${files.length} files with the course folder structure.`,
+      );
+      await this.blackboxDownloader.downloadSelected(files, layout);
+      if (layout === 'flat') this.pruneEmptyHierarchyFolders(files);
     } else if (instructionCourses.length === 0) {
       log.warn('No files or course instructions selected');
     } else {
@@ -162,6 +240,32 @@ export class DownloadWorkflow extends EventEmitter {
       throw new Error('Workflow not initialized. Call initialize() first.');
     }
     return this.blackboxDownloader;
+  }
+
+  /**
+   * A flat run writes every file into its course folder, but discovery still
+   * created the course / section / subfolder shells. Remove the ones that ended
+   * up empty so the course folder holds the flat files and nothing else — the
+   * populated folders of a hierarchy run are never touched, and only empty
+   * directories are deleted.
+   */
+  private pruneEmptyHierarchyFolders(files: DiscoveredFile[]): void {
+    const courseFolders = new Set<string>();
+    for (const file of files) {
+      const courseFolder = courseFolderForSavePath(this.config.downloadDir, file.savePath);
+      if (courseFolder) courseFolders.add(courseFolder);
+    }
+
+    let removed = 0;
+    for (const courseFolder of courseFolders) {
+      removed += pruneEmptyDirectories(courseFolder);
+    }
+
+    if (removed > 0) {
+      log.info(
+        `Flat layout: removed ${removed} empty folder${removed === 1 ? '' : 's'} left over from the folder structure.`,
+      );
+    }
   }
 
   emitSummary(summary: WorkflowSummary): void {
@@ -186,13 +290,18 @@ function filterCourses(courses: Course[], options?: DiscoverCoursesOptions): Cou
   const available = excluded.size > 0 ? courses.filter(course => !excluded.has(course.id)) : courses;
   if (!pattern) return available;
 
+  let regex: RegExp;
   try {
-    const regex = new RegExp(pattern);
-    return available.filter(course => regex.test(course.name));
+    regex = new RegExp(pattern);
   } catch {
+    // Tolerated by design (see tests): a malformed pattern keeps every course
+    // visible rather than hiding the list. Warn loudly so a typo'd pattern is
+    // obvious in the run output before anything is downloaded.
+    log.warn(`Course filter "${pattern}" is not a valid regular expression; ignoring it.`);
     return available;
   }
+  return available.filter(course => regex.test(course.name));
 }
 
-export { filterAlreadyDownloaded, filterCourses };
+export { alreadySavedCounts, filterCourses };
 

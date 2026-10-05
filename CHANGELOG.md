@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-10-05
+
+### Changed
+- The Windows app is now a Tauri/Rust build (installer about 2.5 MB). Batch Automation is not part of this build yet.
+- The background dot wave runs at a steady 60 fps, pauses when the window is not in focus, and frees its graphics memory after 20 seconds in the background.
+- The wave's top fade is drawn by the wave itself instead of a full-window CSS mask, which saves a rendering pass every frame.
+- The speed readout no longer flickers to zero once a second during a download.
+- The window and taskbar now show the app icon.
+- New dark interface with the native Windows 11 Mica material, a thin title bar with tabs and status, and a single typeface. Windows 10 gets a solid dark surface.
+- Denser layouts: the file and course lists get roughly twice the rows (about ten files at the 980x680 minimum window); the page title is now screen-reader only and the options sit on one row.
+- A slow, GPU-drawn fake-3D dot wave sits behind the interface (cursor parallax and click ripples). It is dimmed under data, pauses when the window is hidden, stays still under reduced motion, and can be set to On / Still / Off in Settings. Cost: about 1% of one CPU core and ~80 MB.
+- Faster to render and start: no photographic background, no backdrop blur, update checker loaded on demand.
+- The download history is now a small JSON file instead of a SQLite database, removing the native module. Existing downloads on disk are still detected.
+- The installer is Windows-only and about 20% smaller (en-US locales only, unused Chromium components removed, runtime dependencies cut to what the app uses).
+
+### Fixed
+- A download folder changed in Settings after the scan was ignored, so files landed in the old folder while the new one stayed empty. The transfer now saves into the folder currently chosen in Settings, and the transfer screen and the summary show exactly where the files went (and how long the transfer took).
+- Progress is now computed by the app, not guessed on screen: skipped, rejected and failed files count as handled, the bar never shows 100% while a file is still running, retried bytes are discarded instead of double counted, and speed and time left show only when they can be trusted. It says when it is counting files instead of bytes.
+
+### Changed
+- Course text is off by default; tick the courses you want it for.
+- File lists can be sorted by name, type, size or course (headers or the Sort menu). The course settings are now labelled "Course filter" and describe what they hide.
+
+### Removed
+- The command-line/terminal interface, MCP server, Docker setup, source launchers, the legacy Python tool, the unused AI module and the Obscura test backend. macOS and Linux packages are no longer built.
+
+## [1.2.0] - 2026-10-05
+
+### Fixed
+- Fixed the Windows startup error caused by missing packaged logging dependencies. Builds now verify required application dependencies before creating the installer.
+- New installations can load folder information and open their downloads and logs before credentials are saved.
+- Fixed navigation underline alignment and glass flicker when switching screens or Settings sections.
+
+### Changed
+- Redesigned every desktop screen with centered navigation, frosted glass surfaces, a bundled mountain-and-lake background, and clearer typography.
+- Added smooth navigation, screen, control, and dialog transitions with reduced-motion support.
+- Unified hover and press feedback, replaced interface icons with Lucide, and kept download cleanup in Downloads.
+- Reduced the Windows installer size by using installed Microsoft Edge instead of bundling a separate Chromium browser.
+
+## [1.1.2] - 2026-09-23
+
+### Fixed
+- Course selection now works per course: Blackboard's "My Courses" links (`.../execute/launcher?type=Course&id=_7247_1&url=`) carry no `course_id`, so every course ended up with the same empty id and ticking one checkbox selected the whole list.
+- Course ids are now unique per course, so the course picker, the "include instructions" picker and the shared automation course list each track courses separately; blocked-course entries saved by older versions are migrated to the same ids, which makes existing blocks apply again.
+- Added a "Cancel download" button to the download screen: it aborts in-flight transfers, drops everything still queued and keeps the files already saved; the run then reports as cancelled instead of failed.
+
+## [1.1.1] - 2026-09-06
+
+### Fixed
+- Automation logins were rejected with "incorrect username or password": G-numbers are case-sensitive on Blackboard and were lowercased before login; they are now kept in their canonical uppercase form (e.g. G2015010014).
+- Automation sessions are now fully isolated from the normal downloader: each session builds an explicit config (own database, file-tree cache and browser profile) with no environment inheritance, so normal course filters, blocked courses and download history can never leak in.
+- Every automation run now wipes the previous downloads and logs first, so each download starts from a fresh state; a Clear downloads button does the same on demand.
+- Courses are only treated as covered after they were actually downloaded: claims are confirmed per course and released on failure or cancel, so failed courses can be retried by other sessions instead of showing up as already covered.
+- Automation downloads course-by-course (discover, metadata, download, instructions per course) with the same metadata step as the normal downloader, and records per-file outcomes so failures are visible in the debug log.
+- Automation runs can now be cancelled mid-run; cancelling keeps everything already downloaded.
+- Greatly expanded automation debug logging (session config, login, course lists, per-course discovery/metadata/download/instruction counts and every failure reason).
+
+## [1.1.0] - 2026-09-05
+
+### Added
+- Automation section (between Agent Skills and Settings) with batch G-number downloading: each G-number logs into its own headless Blackboard session, course lists are kept session-only, and every unique course is downloaded exactly once across all numbers.
+- Parallel automation sessions (default 4) with per-file concurrency; login failures abort only the affected G-number.
+- Real-time automation run log written into the automation download directory root: `automation-runlog.json`, `automation-runlog.xlsx` (failed logins, courses per G-number, summary) and a separate `automation-debug.json`.
+- Independent automation settings: paste-in G-number list (popup), dedicated download directory (must differ from the normal download directory), per-file maximum size (default 100 MB) and excluded extensions (default .mp3, .mp4).
+- Obscura headless-engine integration as a testing example: CDP backend with stealth/proxy support, screenshot/PDF capture, and the `blackbox obscura-check` CLI command.
+
+### Fixed
+- Login no longer fails when Blackboard's cookie/privacy consent dialog blocks the login button; the dialog is dismissed and the click retried.
+- Download retries no longer inflate failure counts or byte progress; failures are reported once.
+- Truncated downloads are no longer saved as complete (Content-Length verification); 4xx and disk-full errors fail fast instead of retrying.
+- Allowlisted-but-unsupported files are reported as rejected in summaries.
+- Harness skill files with a stripped managed marker can now be repaired and removed.
+- Agent exports use safe backup-then-swap writes and accurate per-file statuses; zero-point items and special characters are preserved in frontmatter.
+- Settings: "Run again" no longer sends the password mask as a real password, saved passwords can be cleared, legacy credential migration is resumable, and update-check toggles apply immediately.
+
 ## [1.0.2] - 2026-08-28
 
 ### Added

@@ -1,4 +1,8 @@
-import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { Icon, AppIcon } from "./components/Icons";
+import { Action, Surface, Scene, WorkspaceNavigation, WorkspaceHeading, WorkspaceFooter } from "./components/Workspace";
+import { DotWave, DotWaveSetting, readDotWaveMode, saveDotWaveMode } from "./components/DotWave";
+import type { DotWaveMode } from "./components/waveEngine";
 import { toGuiErrorMessage } from '../../errorMessage';
 import {
   DEMO_AGENT_OUTPUT,
@@ -9,9 +13,54 @@ import {
   DEMO_SUMMARY,
 } from './demoData';
 
+type TransferSnapshot = {
+  total: number; settled: number; completed: number; skipped: number; rejected: number; failed: number; cancelled: number; retrying: number;
+  bytes: number; totalBytes: number; unknownSize: number; percent: number; basis: 'bytes' | 'files'; speed: number; etaSeconds: number | null; elapsedMs: number; active: string[];
+};
+type SortKey = 'default' | 'name' | 'type' | 'size' | 'course';
 type DownloadStage = 'ready' | 'courses' | 'files' | 'download' | 'summary';
-type View = 'download' | 'agent' | 'settings';
+type View = 'download' | 'automation' | 'agent' | 'settings';
 type SettingsSection = 'credentials' | 'courses' | 'diagnostics' | 'updates';
+type AutomationTab = 'downloads' | 'settings';
+type AutomationGnumberStatus = 'pending' | 'logging-in' | 'discovering' | 'downloading' | 'done' | 'failed' | 'cancelled';
+type AutomationSettingsState = {
+  gnumbers: string[];
+  downloadDir: string;
+  maxFileSizeMB: number;
+  excludedExtensionsCsv: string;
+};
+type AutomationGnumberRun = {
+  gnumber: string;
+  status: AutomationGnumberStatus;
+  error?: string;
+  courses: string[];
+  claimedCourses: string[];
+  skippedCourses: string[];
+  filesDownloaded: number;
+  filesFailed: number;
+  filesSkipped: number;
+  instructionsDownloaded: number;
+};
+type AutomationRunView = {
+  running: boolean;
+  total: number;
+  parallelSessions: number;
+  entries: Record<string, AutomationGnumberRun>;
+  failedLogins: Array<{ gnumber: string; error: string; at: string }>;
+  uniqueCourses: number;
+  filesDownloaded: number;
+  filesFailed: number;
+  filesSkipped: number;
+  instructionsDownloaded: number;
+  summary?: {
+    succeeded: number;
+    runlogPath: string;
+    xlsxPath: string;
+    debugPath: string;
+    cancelled?: boolean;
+  };
+  error?: string;
+};
 type Course = { id: string; name: string; url: string; path: string };
 type BlockedCourse = { id: string; name: string };
 type DiscoveredFile = {
@@ -24,19 +73,28 @@ type DiscoveredFile = {
   fileType?: string;
 };
 type DoctorRow = { status: 'pass' | 'warn' | 'fail'; message: string; required?: boolean };
+/** Which layouts already hold a copy of a discovered file. */
+type ExistingFileState = { hierarchy: boolean; flat: boolean; size?: number };
 type Summary = {
+  downloadDir?: string;
+  durationMs?: number;
   coursesDiscovered: number;
   coursesSelected: number;
   filesDiscovered: number;
   filesSelected: number;
   filesDownloaded: number;
   filesSkipped: number;
+  /** Files the chosen layout already held before this run started. */
+  alreadySaved?: number;
+  filesRejected?: number;
   filesFailed: number;
   failedFiles: Array<{ name: string; reason: string }>;
   instructionCoursesSelected: number;
   instructionsDiscovered: number;
   instructionsDownloaded: number;
   instructionWarnings: string[];
+  /** True when the user stopped the run before it completed on its own. */
+  cancelled?: boolean;
 };
 type PreparationProgress = { completed: number; total: number; label: string };
 type DiscoveryProgress = {
@@ -66,83 +124,8 @@ type DiagnosticsProgress = {
   loginTest: boolean;
 };
 
-type IconName =
-  | 'download'
-  | 'diagnostics'
-  | 'agent'
-  | 'updates'
-  | 'folder'
-  | 'file'
-  | 'terminal'
-  | 'scan'
-  | 'search'
-  | 'search-x'
-  | 'check'
-  | 'check-circle'
-  | 'check-square'
-  | 'x'
-  | 'x-circle'
-  | 'key'
-  | 'lock'
-  | 'monitor'
-  | 'eye'
-  | 'eye-off'
-  | 'open'
-  | 'refresh'
-  | 'cloud-download'
-  | 'clock'
-  | 'gauge'
-  | 'alert'
-  | 'warning'
-  | 'info'
-  | 'book'
-  | 'sliders'
-  | 'shield';
-
-const iconPaths: Record<IconName, React.ReactNode> = {
-  download: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
-  diagnostics: <path d="M3 12h4l3-9 4 18 3-9h4" />,
-  agent: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V3h6v1" /><path d="M8.5 10h7M8.5 14h7M8.5 18h4" /></>,
-  updates: <><path d="M20 11a8.1 8.1 0 0 0-14.8-4L3 10" /><path d="M3 4v6h6" /><path d="M4 13a8.1 8.1 0 0 0 14.8 4l2.2-3" /><path d="M21 20v-6h-6" /></>,
-  folder: <><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5Z" /><path d="M3.4 10h17.2" /></>,
-  file: <><path d="M6 3h7l5 5v13H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /><path d="M13 3v5h5M8 12h6M8 16h6" /></>,
-  terminal: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m7 10 3 2.5L7 15" /><path d="M13 15h4" /></>,
-  scan: <><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" /><circle cx="12" cy="12" r="3.5" /><path d="M12 8.5v7M8.5 12h7" /></>,
-  search: <><circle cx="10.8" cy="10.8" r="6.3" /><path d="m16 16 4.2 4.2" /></>,
-  'search-x': <><circle cx="10.8" cy="10.8" r="6.3" /><path d="m16 16 4.2 4.2M8.7 8.7l4.2 4.2M12.9 8.7l-4.2 4.2" /></>,
-  check: <path d="m5 12.5 4.2 4.2L19 7" />,
-  'check-circle': <><circle cx="12" cy="12" r="8.5" /><path d="m8 12.2 2.7 2.7L16.5 9" /></>,
-  'check-square': <><rect x="4" y="4" width="16" height="16" rx="3" /><path d="m8 12 2.5 2.5L16.5 9" /></>,
-  x: <><path d="m6 6 12 12M18 6 6 18" /></>,
-  'x-circle': <><circle cx="12" cy="12" r="8.5" /><path d="m9 9 6 6M15 9l-6 6" /></>,
-  key: <><circle cx="8.5" cy="15.5" r="3.5" /><path d="m11 13 8-8M15 5l4 4M16.5 8.5l2 2" /></>,
-  lock: <><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v2" /></>,
-  monitor: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></>,
-  eye: <><path d="M3 12s3.2-5 9-5 9 5 9 5-3.2 5-9 5-9-5-9-5Z" /><circle cx="12" cy="12" r="2" /></>,
-  'eye-off': <><path d="m3 3 18 18" /><path d="M10.6 7.2A9.4 9.4 0 0 1 12 7c5.8 0 9 5 9 5a15.5 15.5 0 0 1-3.1 3.5M6.2 6.3C4.2 7.6 3 9.5 3 9.5s3.2 5 9 5c.6 0 1.2-.1 1.8-.2" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></>,
-  open: <><path d="M14 4h6v6M20 4l-8 8" /><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" /></>,
-  refresh: <><path d="M20 11a8.1 8.1 0 0 0-14.8-4L3 10" /><path d="M3 4v6h6" /><path d="M4 13a8.1 8.1 0 0 0 14.8 4l2.2-3" /><path d="M21 20v-6h-6" /></>,
-  'cloud-download': <><path d="M7.5 18.5H6a4 4 0 1 1 1.7-7.6A5.5 5.5 0 0 1 18 12.5h.5a3 3 0 1 1 0 6H16" /><path d="M12 11v8M8.8 15.8 12 19l3.2-3.2" /></>,
-  clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5v5l3.2 1.8" /></>,
-  gauge: <><path d="M4.5 17a8.2 8.2 0 1 1 15 0" /><path d="m12 12 4-4M6 18h.01M18 18h.01" /></>,
-  alert: <><circle cx="12" cy="12" r="8.5" /><path d="M12 8v5M12 16h.01" /></>,
-  warning: <><path d="m12 4 8.5 15h-17L12 4Z" /><path d="M12 10v4M12 17h.01" /></>,
-  info: <><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" /></>,
-  book: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 0 4 22Z" /><path d="M4 5.5V22M8 7h8M8 11h8" /></>,
-  sliders: <><path d="M4 6h6M14 6h6M4 12h2M10 12h10M4 18h10M18 18h2" /><circle cx="12" cy="6" r="2" /><circle cx="8" cy="12" r="2" /><circle cx="16" cy="18" r="2" /></>,
-  shield: <><path d="M12 3.5 19 6v5.5c0 4.3-2.9 7.5-7 9-4.1-1.5-7-4.7-7-9V6Z" /><path d="m9 12 2 2 4-4" /></>,
-};
-
 const DEMO_MODE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
 const DEMO_SCREEN = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('screen') : null;
-
-const Icon = React.memo(function Icon({ name, size = 18, className = '' }: { name: IconName; size?: number; className?: string }) {
-  return <svg className={`icon ${className}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{iconPaths[name]}</svg>;
-});
-
-const AppIcon = React.memo(function AppIcon({ className = '' }: { className?: string }) {
-  return <img className={`app-icon ${className}`} src="./app-icon.png" alt="" aria-hidden="true" />;
-});
 
 const formatBytes = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -158,8 +141,128 @@ const eta = (seconds: number): string => {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 };
 
+const formatDuration = (ms: number): string => {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return hours > 0 ? `${hours}h ${minutes}m` : minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+};
 const clampPercent = (value: number): number => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+function parseGnumberList(input: string): { valid: string[]; invalid: string[] } {
+  const seen = new Set<string>();
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  for (const raw of input.split(/[\r\n,;]+/)) {
+    const token = raw.trim();
+    if (!token) continue;
+    const digits = token.replace(/^G/i, '').replace(/[^\d]/g, '');
+    if (!/^\d{6,10}$/.test(digits)) { invalid.push(token); continue; }
+    const normalized = 'G' + digits;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    valid.push(normalized);
+  }
+  return { valid, invalid };
+}
+
+function applyAutomationEvent(
+  previous: AutomationRunView | null,
+  type: string,
+  payload: Record<string, unknown>,
+): AutomationRunView | null {
+  if (!previous) {
+    if (type === 'automation:start') {
+      return {
+        running: true,
+        total: Number(payload.total || 0),
+        parallelSessions: Number(payload.parallelSessions || 1),
+        entries: {},
+        failedLogins: [],
+        uniqueCourses: 0,
+        filesDownloaded: 0,
+        filesFailed: 0,
+        filesSkipped: 0,
+        instructionsDownloaded: 0,
+      };
+    }
+    return previous;
+  }
+
+  const next: AutomationRunView = { ...previous, entries: { ...previous.entries } };
+  const ensureEntry = (gnumber: string): AutomationGnumberRun => {
+    const existing = next.entries[gnumber];
+    if (existing) return existing;
+    const created: AutomationGnumberRun = {
+      gnumber,
+      status: 'pending',
+      courses: [],
+      claimedCourses: [],
+      skippedCourses: [],
+      filesDownloaded: 0,
+      filesFailed: 0,
+      filesSkipped: 0,
+      instructionsDownloaded: 0,
+    };
+    next.entries[gnumber] = created;
+    return created;
+  };
+  const patch = (gnumber: string, mutate: (entry: AutomationGnumberRun) => void): void => {
+    const entry = ensureEntry(gnumber);
+    const copy = { ...entry };
+    mutate(copy);
+    next.entries[gnumber] = copy;
+  };
+
+  switch (type) {
+    case 'automation:gnumber:start':
+      patch(String(payload.gnumber), entry => { entry.status = 'logging-in'; entry.error = undefined; });
+      break;
+    case 'automation:gnumber:status': {
+      const status = String(payload.status) as AutomationGnumberStatus;
+      patch(String(payload.gnumber), entry => { entry.status = status; entry.error = payload.error ? String(payload.error) : undefined; });
+      break;
+    }
+    case 'automation:gnumber:courses':
+      patch(String(payload.gnumber), entry => { entry.courses = Array.isArray(payload.courses) ? payload.courses.map(String) : []; });
+      break;
+    case 'automation:course:claimed':
+      patch(String(payload.gnumber), entry => { entry.claimedCourses = [...entry.claimedCourses, String(payload.course)]; });
+      next.uniqueCourses += 1;
+      break;
+    case 'automation:course:released':
+      patch(String(payload.gnumber), entry => { entry.claimedCourses = entry.claimedCourses.filter(course => course !== String(payload.course)); });
+      next.uniqueCourses = Math.max(0, next.uniqueCourses - 1);
+      break;
+    case 'automation:course:skipped':
+      patch(String(payload.gnumber), entry => { entry.skippedCourses = [...entry.skippedCourses, String(payload.course)]; });
+      break;
+    case 'automation:file:done':
+      patch(String(payload.gnumber), entry => { entry.filesDownloaded += 1; });
+      next.filesDownloaded += 1;
+      break;
+    case 'automation:file:progress':
+      break;
+    case 'automation:course:done':
+      break;
+    case 'automation:gnumber:done': {
+      const status = String(payload.status) as AutomationGnumberStatus;
+      patch(String(payload.gnumber), entry => { entry.status = status; entry.error = payload.error ? String(payload.error) : undefined; });
+      break;
+    }
+    case 'automation:done':
+      next.running = false;
+      break;
+    case 'automation:cancelled':
+      next.running = false;
+      break;
+    default:
+      break;
+  }
+  return next;
+}
 const demoInstructionCount = (courseCount: number): number => courseCount > 0 ? Math.max(courseCount, Math.round((courseCount * 42) / 9)) : 0;
 const WIZARD_STEPS = ['Courses', 'Files', 'Download', 'Summary'] as const;
 const wizardStepIndex = (stage: DownloadStage): number => stage === 'courses' ? 0 : stage === 'files' ? 1 : stage === 'download' ? 2 : stage === 'summary' ? 3 : -1;
@@ -177,6 +280,7 @@ function harnessSkillPath(info: Record<string, unknown> | null): string {
 }
 
 export function App() {
+  const [dotMode, setDotMode] = useState<DotWaveMode>(readDotWaveMode);
   const [stage, setStage] = useState<DownloadStage>('ready');
   const [activeView, setActiveView] = useState<View>('download');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('credentials');
@@ -184,6 +288,7 @@ export function App() {
   const [status, setStatus] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isPreparingDownload, setIsPreparingDownload] = useState(false);
+  const [isCancellingDownload, setIsCancellingDownload] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [savedPassword, setSavedPassword] = useState('');
   const [passwordStored, setPasswordStored] = useState(false);
@@ -206,18 +311,42 @@ export function App() {
   const [files, setFiles] = useState<DiscoveredFile[]>([]);
   const [fileSearch, setFileSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [sortKey, setSortKey] = useState<SortKey>('default');
+  const [sortDesc, setSortDesc] = useState(false);
+  const [transfer, setTransfer] = useState<TransferSnapshot | null>(null);
   const [selectedFileUrls, setSelectedFileUrls] = useState<Set<string>>(new Set());
+  /** Per-URL, per-layout "already saved" state from the last scan. */
+  const [existingByUrl, setExistingByUrl] = useState<Record<string, ExistingFileState>>({});
+  /** Show files the current layout already holds (marked, not selectable). */
+  const [showSavedFiles, setShowSavedFiles] = useState(false);
+  /** The course-text picker starts collapsed: the file list is the main task. */
+  const [instructionPickerOpen, setInstructionPickerOpen] = useState(false);
+  /** Keep the Blackboard course / section / folder structure, or drop files straight into the course folder. */
+  const [keepHierarchy, setKeepHierarchy] = useState(true);
   const [knownByUrl, setKnownByUrl] = useState<Map<string, number>>(new Map());
   const [summary, setSummary] = useState<Summary | null>(null);
   const [downloadState, setDownloadState] = useState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' });
   const [perUrlDownloaded, setPerUrlDownloaded] = useState<Map<string, number>>(new Map());
-  const [speedWindow, setSpeedWindow] = useState({ lastTs: Date.now(), bytes: 0 });
   const [selectedRunFileCount, setSelectedRunFileCount] = useState(0);
+  /** Layout actually used by the current/last run, for the transfer and summary screens. */
+  const [runLayout, setRunLayout] = useState<'hierarchy' | 'flat'>('hierarchy');
   const [selectedRunInstructionCourseCount, setSelectedRunInstructionCourseCount] = useState(0);
   const [instructionProgress, setInstructionProgress] = useState<InstructionProgress | null>(null);
   const [agentInfo, setAgentInfo] = useState<Record<string, unknown> | null>(null);
   const [agentOutput, setAgentOutput] = useState<Record<string, unknown> | null>(null);
   const [updateState, setUpdateState] = useState<Record<string, unknown>>({ status: 'idle' });
+  const [automationTab, setAutomationTab] = useState<AutomationTab>('settings');
+  const [automationSettings, setAutomationSettings] = useState<AutomationSettingsState>({
+    gnumbers: [],
+    downloadDir: '',
+    maxFileSizeMB: 100,
+    excludedExtensionsCsv: '.mp3, .mp4',
+  });
+  const [automationNormalDir, setAutomationNormalDir] = useState('');
+  const [automationGnumberModal, setAutomationGnumberModal] = useState(false);
+  const [automationGnumberDraft, setAutomationGnumberDraft] = useState('');
+  const [automationRun, setAutomationRun] = useState<AutomationRunView | null>(null);
+  const [isAutomationRunning, setIsAutomationRunning] = useState(false);
 
   const selectedRunUrlSetRef = useRef<Set<string>>(new Set());
   const selectedRunKnownByUrlRef = useRef<Map<string, number>>(new Map());
@@ -225,7 +354,7 @@ export function App() {
   useEffect(() => {
     if (DEMO_MODE) {
       const demoDownloadDir = 'C:\\Users\\demo\\Downloads\\Blackbox';
-      setVersion('1.0.2');
+      setVersion('2.0.0');
       setConfig(previous => ({ ...previous, username: 'g12345678', password: 'blackboard-demo-password', downloadDir: demoDownloadDir, headless: true, autoCheckUpdates: true }));
       setSavedPassword('blackboard-demo-password');
       setPasswordStored(true);
@@ -246,7 +375,8 @@ export function App() {
         setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.map(course => course.id))); setStage('courses'); setIsScanningCourses(true);
         setDiscoveryProgress({ phase: 'metadata', completed: 41, total: DEMO_FILES.length, currentFile: DEMO_FILES[41].name, filesFound: DEMO_FILES.length });
       } else if (DEMO_SCREEN === 'files') {
-        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.slice(0, 9).map(course => course.id))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.slice(0, 9).map(course => course.id))); setFiles(DEMO_FILES); setSelectedFileUrls(new Set(DEMO_FILES.map(file => file.url))); setStage('files');
+        const demoExisting = demoExistingState(DEMO_FILES);
+        setCourses(DEMO_COURSES); setSelectedCourseIds(new Set(DEMO_COURSES.slice(0, 9).map(course => course.id))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.slice(0, 9).map(course => course.id))); setFiles(DEMO_FILES); setExistingByUrl(demoExisting); setSelectedFileUrls(new Set(DEMO_FILES.filter(file => !demoExisting[file.url]?.hierarchy).map(file => file.url))); setStage('files');
       } else if (DEMO_SCREEN === 'download') {
         const totalKnownBytes = DEMO_FILES.reduce((total, file) => total + (file.size || 0), 0);
         setFiles(DEMO_FILES); setSelectedFileUrls(new Set(DEMO_FILES.map(file => file.url))); setSelectedInstructionCourseIds(new Set(DEMO_COURSES.slice(0, 9).map(course => course.id))); setSelectedRunFileCount(DEMO_FILES.length); setSelectedRunInstructionCourseCount(9); setInstructionProgress({ phase: 'write', completed: 24, total: demoInstructionCount(9), currentCourse: DEMO_COURSES[5].name, currentSection: 'Course Materials', currentTitle: 'Midterm study guide and assessment criteria' });
@@ -257,7 +387,8 @@ export function App() {
         setActiveView('settings'); setSettingsSection('diagnostics'); setDoctorRows(DEMO_DOCTOR_ROWS); setDiagnosticsProgress({ running: false, completed: 10, total: 10, current: 'Diagnostics complete', loginTest: false });
       } else if (DEMO_SCREEN === 'blocked-courses' || DEMO_SCREEN === 'course-settings') {
         setActiveView('settings'); setSettingsSection('courses');
-      } else if (DEMO_SCREEN === 'agent') setActiveView('agent');
+      } else if (DEMO_SCREEN === 'automation') setActiveView('automation');
+      else if (DEMO_SCREEN === 'agent') setActiveView('agent');
       else if (DEMO_SCREEN === 'updates') { setActiveView('settings'); setSettingsSection('updates'); }
       else if (DEMO_SCREEN === 'credentials') { setActiveView('settings'); setSettingsSection('credentials'); }
       return;
@@ -293,6 +424,17 @@ export function App() {
         setConfig(previous => ({ ...previous, blockedCourses: loadedBlockedCourses }));
         setPaths(await window.blackboxGui.getPaths());
         setUpdateState(await window.blackboxGui.getUpdateState());
+        try {
+          const automation = (await window.blackboxGui.loadAutomationSettings()) as { settings: Record<string, unknown>; normalDownloadDir: string };
+          const stored = automation.settings as Record<string, unknown>;
+          setAutomationSettings({
+            gnumbers: Array.isArray(stored.gnumbers) ? (stored.gnumbers as string[]).map(String) : [],
+            downloadDir: String(stored.downloadDir || ''),
+            maxFileSizeMB: Math.max(1, Math.round(Number(stored.maxFileSizeBytes || 0) / (1024 * 1024)) || 100),
+            excludedExtensionsCsv: Array.isArray(stored.excludedExtensions) ? (stored.excludedExtensions as string[]).map(String).join(', ') : '.mp3, .mp4',
+          });
+          setAutomationNormalDir(String(automation.normalDownloadDir || ''));
+        } catch { /* the automation panel surfaces validation errors on save */ }
       } catch (error) { setErrorMessage(toGuiErrorMessage(error)); }
     })();
   }, []);
@@ -313,57 +455,20 @@ export function App() {
       if (evt.type === 'instructions:write:start') setInstructionProgress(previous => ({ phase: 'write', completed: 0, total: Number(payload.instructionsDiscovered || 0), currentCourse: '', currentSection: '', currentTitle: '' }));
       if (evt.type === 'instructions:write:progress') setInstructionProgress({ phase: 'write', completed: Number(payload.completed || 0), total: Number(payload.total || 0), currentCourse: String(payload.currentCourse || ''), currentSection: String(payload.currentSection || ''), currentTitle: String(payload.currentTitle || '') });
       if (evt.type === 'instructions:write:complete') setInstructionProgress(previous => previous ? { ...previous, completed: previous.total, currentTitle: 'Instructions saved' } : previous);
-      if (evt.type === 'download:start') {
-        const url = String(payload.url || '');
-        if (selectedRunUrlSetRef.current.has(url)) setDownloadState(previous => ({ ...previous, currentFile: String(payload.name || payload.filename || '') }));
+      if (evt.type === 'transfer:progress') {
+        // The backend owns the numbers: counts, bytes, speed and ETA arrive as one snapshot.
+        const snapshot = evt.payload as TransferSnapshot;
+        setTransfer(snapshot);
+        setDownloadState({ completed: snapshot.completed, failed: snapshot.failed, skipped: snapshot.skipped + snapshot.rejected, downloadedBytes: snapshot.bytes, totalKnownBytes: snapshot.totalBytes, unknownCount: snapshot.unknownSize, speed: snapshot.speed, currentFile: snapshot.active[0] || '' });
       }
-      if (evt.type === 'download:progress') {
-        const url = String(payload.url || '');
-        if (selectedRunUrlSetRef.current.has(url)) {
-          const downloaded = Number(payload.downloaded || 0);
-          setPerUrlDownloaded(previous => {
-            const next = new Map(previous);
-            const old = next.get(url) || 0;
-            if (downloaded > old) {
-              const delta = downloaded - old;
-              next.set(url, downloaded);
-              setSpeedWindow(current => ({ ...current, bytes: current.bytes + delta }));
-              const knownSize = selectedRunKnownByUrlRef.current.get(url);
-              if (typeof knownSize === 'number') {
-                const knownDelta = Math.max(0, Math.min(downloaded, knownSize) - Math.min(old, knownSize));
-                if (knownDelta > 0) setDownloadState(current => ({ ...current, downloadedBytes: Math.min(current.totalKnownBytes, current.downloadedBytes + knownDelta) }));
-              }
-            }
-            return next;
-          });
-        }
-      }
-      if (evt.type === 'download:complete' || evt.type === 'download:error' || evt.type === 'download:skip') {
-        const url = String(payload.url || '');
-        if (!url || selectedRunUrlSetRef.current.has(url)) {
-          const key: 'completed' | 'failed' | 'skipped' = evt.type === 'download:complete' ? 'completed' : evt.type === 'download:error' ? 'failed' : 'skipped';
-          setDownloadState(previous => ({ ...previous, [key]: previous[key] + 1 }));
-        }
-      }
+      if (evt.type === 'download:cancel') { setIsCancellingDownload(true); setStatus('Stopping the download. Files already saved are kept.'); }
       if (evt.type === 'diagnostics:progress') setDiagnosticsProgress({ running: Boolean(payload.running), completed: Number(payload.completed || 0), total: Number(payload.total || 0), current: String(payload.current || ''), loginTest: Boolean(payload.loginTest) });
       if (evt.type === 'summary:ready') setSummary(evt.payload as Summary);
       if (evt.type === 'update:state') setUpdateState(evt.payload as Record<string, unknown>);
+      if (evt.type.startsWith('automation:')) setAutomationRun(previous => applyAutomationEvent(previous, evt.type, payload));
     });
     return () => unsub();
   }, [selectedCourseIds.size]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now();
-      setSpeedWindow(previous => {
-        const elapsed = (now - previous.lastTs) / 1000;
-        if (elapsed < 1) return previous;
-        setDownloadState(current => ({ ...current, speed: previous.bytes / elapsed }));
-        return { lastTs: now, bytes: 0 };
-      });
-    }, 500);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => { if (activeView !== 'settings' || settingsSection !== 'credentials') setShowPassword(false); }, [activeView, settingsSection]);
 
@@ -378,15 +483,55 @@ export function App() {
     ),
     [blockedCourseIds, courses, deferredCourseSearch],
   );
+  // "Already saved" is tracked per layout: a folder-structure download does not
+  // mark a file as saved for a flat run (and the other way round), so switching
+  // the layout instantly re-marks the list from the same scan.
+  const layoutKey: 'hierarchy' | 'flat' = keepHierarchy ? 'hierarchy' : 'flat';
+  const savedInLayout = useCallback(
+    (url: string) => Boolean(existingByUrl[url]?.[layoutKey]),
+    [existingByUrl, layoutKey],
+  );
+  const savedFileCount = useMemo(
+    () => files.filter(file => savedInLayout(file.url)).length,
+    [files, savedInLayout],
+  );
   const selectableFiles = useMemo(() => files.filter(file => {
     const query = `${file.name} ${file.courseName} ${file.sectionName}`.toLowerCase();
     if (deferredFileSearch && !query.includes(deferredFileSearch.toLowerCase())) return false;
-    if (typeFilter !== 'all' && (file.fileType || '').toLowerCase() !== typeFilter) return false;
+    if (typeFilter !== 'all' && fileKind(file).toLowerCase() !== typeFilter) return false;
+    if (savedInLayout(file.url) && !showSavedFiles) return false;
     return true;
-  }), [files, deferredFileSearch, typeFilter]);
+  }), [files, deferredFileSearch, typeFilter, savedInLayout, showSavedFiles]);
+  const sortedFiles = useMemo(() => {
+    if (sortKey === 'default') return selectableFiles;
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    const byName = (a: DiscoveredFile, b: DiscoveredFile) => collator.compare(a.name, b.name);
+    const compare = (a: DiscoveredFile, b: DiscoveredFile): number => {
+      if (sortKey === 'name') return byName(a, b);
+      if (sortKey === 'type') return collator.compare(fileKind(a), fileKind(b)) || byName(a, b);
+      if (sortKey === 'course') return collator.compare(`${a.courseName} ${a.sectionName}`, `${b.courseName} ${b.sectionName}`) || byName(a, b);
+      // Size: files with an unknown size always sort last, whichever direction is chosen.
+      const unknownA = typeof a.size !== 'number';
+      const unknownB = typeof b.size !== 'number';
+      if (unknownA || unknownB) return unknownA === unknownB ? byName(a, b) : unknownA ? 1 : -1;
+      return (a.size as number) - (b.size as number) || byName(a, b);
+    };
+    const sorted = [...selectableFiles].sort(compare);
+    if (!sortDesc) return sorted;
+    return sortKey === 'size' ? [...sorted.filter(file => typeof file.size === 'number').reverse(), ...sorted.filter(file => typeof file.size !== 'number')] : sorted.reverse();
+  }, [selectableFiles, sortKey, sortDesc]);
+  function toggleSort(key: Exclude<SortKey, 'default'>) {
+    if (sortKey !== key) { setSortKey(key); setSortDesc(key === 'size'); return; }
+    if (sortDesc === (key === 'size')) { setSortDesc(previous => !previous); return; }
+    setSortKey('default'); setSortDesc(false);
+  }
+  const pendingFiles = useMemo(
+    () => files.filter(file => !savedInLayout(file.url)),
+    [files, savedInLayout],
+  );
   const selectedCourses = courses.filter(course => selectedCourseIds.has(course.id) && !blockedCourseIds.has(course.id));
   const selectedInstructionCourses = selectedCourses.filter(course => selectedInstructionCourseIds.has(course.id));
-  const selectedFiles = files.filter(file => selectedFileUrls.has(file.url));
+  const selectedFiles = files.filter(file => selectedFileUrls.has(file.url) && !savedInLayout(file.url));
   const blockedCourseRows = useMemo(() => {
     const knownIds = new Set(blockedCourseCatalog.map(course => course.id));
     const missing = config.blockedCourses
@@ -394,7 +539,7 @@ export function App() {
       .map(course => ({ id: course.id, name: course.name, url: '', path: '' }));
     return [...blockedCourseCatalog, ...missing];
   }, [blockedCourseCatalog, config.blockedCourses]);
-  const progressPercent = downloadState.totalKnownBytes > 0 ? clampPercent((downloadState.downloadedBytes / downloadState.totalKnownBytes) * 100) : selectedRunFileCount > 0 ? clampPercent(((downloadState.completed + downloadState.skipped) / selectedRunFileCount) * 100) : 0;
+  const progressPercent = transfer ? transfer.percent : downloadState.totalKnownBytes > 0 ? clampPercent((downloadState.downloadedBytes / downloadState.totalKnownBytes) * 100) : selectedRunFileCount > 0 ? clampPercent(((downloadState.completed + downloadState.skipped) / selectedRunFileCount) * 100) : 0;
   const remainingKnownBytes = Math.max(0, downloadState.totalKnownBytes - downloadState.downloadedBytes);
   const countProgress = downloadState.completed + downloadState.skipped;
   const discoveryPercent = discoveryProgress && discoveryProgress.total > 0 ? clampPercent((discoveryProgress.completed / discoveryProgress.total) * 100) : 0;
@@ -406,6 +551,8 @@ export function App() {
   const diagnosticsPercent = diagnosticsProgress && diagnosticsProgress.total > 0 ? clampPercent((diagnosticsProgress.completed / diagnosticsProgress.total) * 100) : 0;
 
   function toggleFileSelection(url: string) {
+    // A file the current layout already holds stays out of the selection.
+    if (savedInLayout(url)) return;
     setSelectedFileUrls(previous => { const next = new Set(previous); if (next.has(url)) next.delete(url); else next.add(url); return next; });
   }
 
@@ -417,6 +564,18 @@ export function App() {
   async function openDownloads() {
     if (DEMO_MODE || !window.blackboxGui) { setStatus('Offline demo: the download directory is represented without opening a folder.'); return; }
     const error = await window.blackboxGui.openDownloads(); if (error) setErrorMessage(error);
+  }
+
+  /**
+   * Switch the download folder layout. "Already saved" is tracked per layout, so
+   * the list re-marks itself and the selection follows the new layout: every file
+   * that layout still needs is selected, and nothing already saved is.
+   */
+  function chooseLayout(next: 'hierarchy' | 'flat') {
+    setKeepHierarchy(next === 'hierarchy');
+    setShowSavedFiles(false);
+    const savedInNext = (url: string) => Boolean(existingByUrl[url]?.[next]);
+    setSelectedFileUrls(new Set(files.filter(file => !savedInNext(file.url)).map(file => file.url)));
   }
 
   async function openLogs() {
@@ -514,7 +673,7 @@ export function App() {
     setIsPreparingDownload(true); setStage('ready'); setSummary(null); setInstructionProgress(null); setSelectedRunInstructionCourseCount(0); setPreparationProgress({ completed: 0, total: 3, label: 'Connecting to Blackboard (offline demo)' }); setStatus('Simulating a Blackboard session. No network request will be made.');
     await delay(650); setPreparationProgress({ completed: 1, total: 3, label: 'Loading your course list' }); await delay(550); setPreparationProgress({ completed: 2, total: 3, label: 'Indexing available courses' }); await delay(750);
     const availableDemoCourses = DEMO_COURSES.filter(course => !config.blockedCourses.some(blocked => blocked.id === course.id));
-    setCourses(availableDemoCourses); setSelectedCourseIds(new Set(availableDemoCourses.map(course => course.id))); setSelectedInstructionCourseIds(new Set(availableDemoCourses.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus(''); setPreparationProgress(null); setIsPreparingDownload(false);
+    setCourses(availableDemoCourses); setSelectedCourseIds(new Set(availableDemoCourses.map(course => course.id))); setSelectedInstructionCourseIds(new Set()); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus(''); setPreparationProgress(null); setIsPreparingDownload(false);
   }
 
   async function startFlow() {
@@ -523,11 +682,19 @@ export function App() {
     if (DEMO_MODE) { await runDemoPreparation(); return; }
     setIsPreparingDownload(true); setStage('ready'); setPreparationProgress({ completed: 0, total: 3, label: 'Connecting to Blackboard' });
     await runWithUiError(async () => {
+      // Never send the stored-password mask as a real password; when the mask
+      // is shown the worker must fall back to the stored credentials.
+      const useStoredPassword = passwordStored && config.password === SAVED_PASSWORD_MASK;
+      const hasPassword = useStoredPassword || Boolean(config.password.trim());
+      if (!config.username.trim() || !hasPassword) {
+        setIsPreparingDownload(false); setPreparationProgress(null);
+        throw new Error('Save your Blackboard username and password in Credentials before starting a download.');
+      }
       setStatus('Connecting to Blackboard and loading your course list...');
-      await window.blackboxGui.workflowStart({ username: config.username || undefined, password: config.password || undefined, downloadDir: config.downloadDir, headless: config.headless });
+      await window.blackboxGui.workflowStart({ username: config.username || undefined, password: useStoredPassword ? undefined : config.password || undefined, downloadDir: config.downloadDir, headless: config.headless });
       setPreparationProgress({ completed: 1, total: 3, label: 'Loading your course list' });
       const discovered = await window.blackboxGui.discoverCourses();
-      setCourses(discovered); setSelectedCourseIds(new Set(discovered.map(course => course.id))); setSelectedInstructionCourseIds(new Set(discovered.map(course => course.id))); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus('');
+      setCourses(discovered); setSelectedCourseIds(new Set(discovered.map(course => course.id))); setSelectedInstructionCourseIds(new Set()); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus('');
     });
     setIsPreparingDownload(false); setPreparationProgress(null);
   }
@@ -542,7 +709,14 @@ export function App() {
     for (let index = 0; index < DEMO_FILES.length; index += 1) {
       await delay(13); setDiscoveryProgress({ phase: 'metadata', completed: index + 1, total: DEMO_FILES.length, currentFile: DEMO_FILES[index].name, filesFound: DEMO_FILES.length });
     }
-    setFiles(DEMO_FILES); setSelectedFileUrls(new Set(DEMO_FILES.map(file => file.url))); setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id))); setKnownByUrl(new Map(DEMO_FILES.map(file => [file.url, file.size || 0]))); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' }); setSelectedRunFileCount(0); setSelectedRunInstructionCourseCount(0); setInstructionProgress(null); setDiscoveryProgress(null); setStage('files'); setIsScanningCourses(false);
+    // Demo data exercises both layouts: the first files look saved in the
+    // folder structure, the next block saved flat.
+    const demoExisting = demoExistingState(DEMO_FILES);
+    setExistingByUrl(demoExisting);
+    setShowSavedFiles(false);
+    setFiles(DEMO_FILES);
+    setSelectedFileUrls(new Set(DEMO_FILES.filter(file => !demoExisting[file.url]?.[keepHierarchy ? 'hierarchy' : 'flat']).map(file => file.url)));
+    setSelectedInstructionCourseIds(new Set()); setKnownByUrl(new Map(DEMO_FILES.map(file => [file.url, file.size || 0]))); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' }); setSelectedRunFileCount(0); setSelectedRunInstructionCourseCount(0); setInstructionProgress(null); setDiscoveryProgress(null); setStage('files'); setIsScanningCourses(false);
   }
 
   async function runScanFiles() {
@@ -552,9 +726,20 @@ export function App() {
     await runWithUiError(async () => {
       try {
         setDiscoveryProgress({ phase: 'courses', completed: 0, total: selectedCourses.length, filesFound: 0 }); setStatus('Scanning selected courses for files...');
-        const result = (await window.blackboxGui.discoverFiles(selectedCourses)) as { files: DiscoveredFile[] };
-        setFiles(result.files); setSelectedFileUrls(new Set(result.files.map(file => file.url))); setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id)));
-        const known = new Map<string, number>(); for (const file of result.files) if (typeof file.size === 'number') known.set(file.url, file.size); setKnownByUrl(known);
+        const result = (await window.blackboxGui.discoverFiles(selectedCourses)) as { files: DiscoveredFile[]; existing?: Record<string, ExistingFileState> };
+        const existing = result.existing || {};
+        setFiles(result.files);
+        setExistingByUrl(existing);
+        setShowSavedFiles(false);
+        // Only files the current layout still needs are pre-selected.
+        setSelectedFileUrls(new Set(result.files.filter(file => !existing[file.url]?.[keepHierarchy ? 'hierarchy' : 'flat']).map(file => file.url)));
+        setSelectedInstructionCourseIds(new Set());
+        const known = new Map<string, number>();
+        for (const file of result.files) {
+          if (typeof file.size === 'number') known.set(file.url, file.size);
+          else if (typeof existing[file.url]?.size === 'number') known.set(file.url, existing[file.url].size as number);
+        }
+        setKnownByUrl(known);
         setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' }); setPerUrlDownloaded(new Map()); setSelectedRunFileCount(0); setSelectedRunInstructionCourseCount(0); setInstructionProgress(null); selectedRunUrlSetRef.current = new Set(); selectedRunKnownByUrlRef.current = new Map(); setDiscoveryProgress(null); setStage('files'); setStatus('');
       } finally { setIsScanningCourses(false); }
     });
@@ -623,15 +808,45 @@ export function App() {
 
   async function startDownload() {
     if (selectedFiles.length === 0 && selectedInstructionCourses.length === 0) return;
-    setActiveView('download'); setErrorMessage('');
-    if (DEMO_MODE) { await runDemoDownload(selectedFiles, selectedInstructionCourses); return; }
+    setActiveView('download'); setErrorMessage(''); setIsCancellingDownload(false);
+    if (DEMO_MODE) { setRunLayout(keepHierarchy ? 'hierarchy' : 'flat'); await runDemoDownload(selectedFiles, selectedInstructionCourses); return; }
     await runWithUiError(async () => {
       const runSelectedFiles = [...selectedFiles]; const selectedKnownByUrl = new Map<string, number>();
       for (const file of runSelectedFiles) { const knownSize = knownByUrl.get(file.url); if (typeof knownSize === 'number') selectedKnownByUrl.set(file.url, knownSize); else if (typeof file.size === 'number') selectedKnownByUrl.set(file.url, file.size); }
       const runInstructionCourses = [...selectedInstructionCourses];
-      const totalKnownBytes = Array.from(selectedKnownByUrl.values()).reduce((total, size) => total + size, 0); selectedRunUrlSetRef.current = new Set(runSelectedFiles.map(file => file.url)); selectedRunKnownByUrlRef.current = selectedKnownByUrl; setSelectedRunFileCount(runSelectedFiles.length); setSelectedRunInstructionCourseCount(runInstructionCourses.length); setPerUrlDownloaded(new Map()); setSpeedWindow({ lastTs: Date.now(), bytes: 0 }); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: runSelectedFiles.length - selectedKnownByUrl.size, speed: 0, currentFile: '' }); setInstructionProgress(runInstructionCourses.length > 0 ? { phase: 'discovery', completed: 0, total: runInstructionCourses.length, itemsFound: 0 } : null); setStatus(''); setStage('download');
-      const result = (await window.blackboxGui.downloadFiles(runSelectedFiles, runInstructionCourses)) as Summary; setSummary(result); setStage('summary');
+      const runLayout: 'hierarchy' | 'flat' = keepHierarchy ? 'hierarchy' : 'flat';
+      setRunLayout(runLayout);
+      const totalKnownBytes = Array.from(selectedKnownByUrl.values()).reduce((total, size) => total + size, 0); selectedRunUrlSetRef.current = new Set(runSelectedFiles.map(file => file.url)); selectedRunKnownByUrlRef.current = selectedKnownByUrl; setTransfer(null); setSelectedRunFileCount(runSelectedFiles.length); setSelectedRunInstructionCourseCount(runInstructionCourses.length); setPerUrlDownloaded(new Map()); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: runSelectedFiles.length - selectedKnownByUrl.size, speed: 0, currentFile: '' }); setInstructionProgress(runInstructionCourses.length > 0 ? { phase: 'discovery', completed: 0, total: runInstructionCourses.length, itemsFound: 0 } : null); setStatus(''); setStage('download');
+      try {
+        const result = (await window.blackboxGui.downloadFiles(runSelectedFiles, runInstructionCourses, runLayout)) as Summary; setSummary(result); setStage('summary');
+        if (result.cancelled) setStatus('Download cancelled. Files and text already saved were kept.');
+        else setStatus('');
+      } finally {
+        setIsCancellingDownload(false);
+      }
     });
+  }
+
+  /**
+   * Stop a running download. The worker aborts in-flight transfers and drops
+   * everything still queued; completed files stay on disk, so the run lands on
+   * the summary screen with whatever finished.
+   */
+  async function cancelDownload() {
+    if (isCancellingDownload) return;
+    if (DEMO_MODE || !window.blackboxGui) { setStatus('Offline demo: cancelling a download is not simulated.'); return; }
+    setIsCancellingDownload(true);
+    setStatus('Stopping the download. Files already saved are kept.');
+    try {
+      const result = await window.blackboxGui.cancelDownload();
+      if (!result.cancelled) {
+        setIsCancellingDownload(false);
+        setStatus('No download is running.');
+      }
+    } catch (error) {
+      setIsCancellingDownload(false);
+      setErrorMessage(toGuiErrorMessage(error));
+    }
   }
 
   async function saveSettings(testLogin: boolean) {
@@ -639,7 +854,17 @@ export function App() {
       const keepStoredPassword = passwordStored && config.password === SAVED_PASSWORD_MASK;
       const passwordToSend = keepStoredPassword ? undefined : config.password;
       const passwordToDisplay = keepStoredPassword ? (savedPassword || SAVED_PASSWORD_MASK) : config.password;
-      setStatus(testLogin ? 'Saving settings and testing login...' : 'Saving settings...'); if (DEMO_MODE || !window.blackboxGui) await delay(350); else await window.blackboxGui.saveSetup({ ...config, password: passwordToSend, testLogin }); setSavedPassword(keepStoredPassword ? savedPassword : passwordToDisplay); setPasswordStored(Boolean(passwordToDisplay)); setPasswordReadable(Boolean(keepStoredPassword ? passwordReadable : passwordToDisplay)); setPasswordError(''); setConfig(previous => ({ ...previous, password: passwordToDisplay })); setHasCredentials(Boolean(config.username.trim()) && Boolean(keepStoredPassword ? passwordReadable : passwordToDisplay)); setStatus(testLogin ? 'Settings saved. Login test requested.' : 'Settings saved.');
+      setStatus(testLogin ? 'Saving settings and testing login...' : 'Saving settings...');
+      if (DEMO_MODE || !window.blackboxGui) {
+        await delay(350);
+      } else {
+        const result = await window.blackboxGui.saveSetup({ ...config, password: passwordToSend, testLogin }) as { ok?: boolean; loginTestPassed?: boolean; loginTestError?: string };
+        if (testLogin && result.loginTestPassed === false) {
+          // The save itself succeeded; surface only the failed login test.
+          setErrorMessage('Settings were saved, but the login test failed: ' + (result.loginTestError || 'unknown error'));
+        }
+      }
+      setSavedPassword(keepStoredPassword ? savedPassword : passwordToDisplay); setPasswordStored(Boolean(passwordToDisplay)); setPasswordReadable(Boolean(keepStoredPassword ? passwordReadable : passwordToDisplay)); setPasswordError(''); setConfig(previous => ({ ...previous, password: passwordToDisplay })); setHasCredentials(Boolean(config.username.trim()) && Boolean(keepStoredPassword ? passwordReadable : passwordToDisplay)); setStatus(testLogin ? 'Settings saved. Login test requested.' : 'Settings saved.');
     });
   }
 
@@ -647,6 +872,131 @@ export function App() {
     await runWithUiError(async () => {
       if (DEMO_MODE || !window.blackboxGui) await delay(250); else await window.blackboxGui.resetSetup(); setHasCredentials(false); setSavedPassword(''); setPasswordStored(false); setPasswordReadable(false); setPasswordError(''); setConfig(previous => ({ ...previous, username: '', password: '' })); setShowPassword(false); setStatus('Credentials reset.');
     });
+  }
+
+  function automationPayload() {
+    return {
+      gnumbers: automationSettings.gnumbers,
+      downloadDir: automationSettings.downloadDir,
+      maxFileSizeBytes: Math.max(1, Math.round(automationSettings.maxFileSizeMB * 1024 * 1024)),
+      excludedExtensions: automationSettings.excludedExtensionsCsv
+        .split(/[,\s]+/)
+        .map(ext => ext.trim().toLowerCase())
+        .filter(Boolean)
+        .map(ext => (ext.startsWith('.') ? ext : '.' + ext)),
+    };
+  }
+
+  async function saveAutomationSettings(testOnly = false) {
+    await runWithUiError(async () => {
+      if (DEMO_MODE || !window.blackboxGui) { setStatus('Automation settings saved (offline demo).'); return; }
+      const result = await window.blackboxGui.saveAutomationSettings(automationPayload());
+      const stored = result.settings as Record<string, unknown>;
+      setAutomationSettings(previous => ({
+        ...previous,
+        gnumbers: Array.isArray(stored.gnumbers) ? (stored.gnumbers as string[]).map(String) : previous.gnumbers,
+        downloadDir: String(stored.downloadDir || previous.downloadDir),
+      }));
+      setStatus('Automation settings saved.');
+      if (testOnly) setStatus('Automation settings saved.');
+    });
+  }
+
+  async function chooseAutomationDirectory() {
+    if (DEMO_MODE || !window.blackboxGui) { setStatus('Offline demo: automation folders are represented only.'); return; }
+    await runWithUiError(async () => {
+      const selected = await window.blackboxGui.chooseAutomationDirectory();
+      if (selected) { setAutomationSettings(previous => ({ ...previous, downloadDir: selected })); setStatus('Automation folder selected. Save settings to keep it.'); }
+    });
+  }
+
+  function openAutomationGnumberModal() {
+    setAutomationGnumberDraft(automationSettings.gnumbers.join('\n'));
+    setAutomationGnumberModal(true);
+  }
+
+  function applyAutomationGnumberDraft() {
+    const parsed = parseGnumberList(automationGnumberDraft);
+    setAutomationSettings(previous => ({ ...previous, gnumbers: parsed.valid }));
+    setAutomationGnumberModal(false);
+    setStatus(`Automation G-numbers set: ${parsed.valid.length} valid${parsed.invalid.length > 0 ? `, ${parsed.invalid.length} lines ignored` : ''}.`);
+  }
+
+  const parsedGnumberPreview = parseGnumberList(automationGnumberDraft);
+
+  async function startAutomationRun() {
+    if (DEMO_MODE || !window.blackboxGui) { setStatus('Offline demo: automatic downloading is not simulated.'); return; }
+    await runWithUiError(async () => {
+      await window.blackboxGui.saveAutomationSettings(automationPayload());
+      setAutomationTab('downloads');
+      setIsAutomationRunning(true);
+      setAutomationRun({
+        running: true,
+        total: automationSettings.gnumbers.length,
+        parallelSessions: Math.min(4, automationSettings.gnumbers.length) || 1,
+        entries: Object.fromEntries(automationSettings.gnumbers.map(gnumber => [gnumber, {
+          gnumber,
+          status: 'pending' as AutomationGnumberStatus,
+          courses: [],
+          claimedCourses: [],
+          skippedCourses: [],
+          filesDownloaded: 0,
+          filesFailed: 0,
+          filesSkipped: 0,
+          instructionsDownloaded: 0,
+        }])),
+        failedLogins: [],
+        uniqueCourses: 0,
+        filesDownloaded: 0,
+        filesFailed: 0,
+        filesSkipped: 0,
+        instructionsDownloaded: 0,
+      });
+      setStatus('Automatic downloading started. The run log is written live into the automation folder.');
+      let summary: { succeeded?: number; runlogPath?: string; xlsxPath?: string; debugPath?: string; cancelled?: boolean } | null = null;
+      try {
+        summary = (await window.blackboxGui.startAutomationRun()) as { succeeded?: number; runlogPath?: string; xlsxPath?: string; debugPath?: string; cancelled?: boolean };
+      } catch (error) {
+        setAutomationRun(previous => previous ? { ...previous, running: false } : previous);
+        throw error;
+      }
+      setAutomationRun(previous => previous ? {
+        ...previous,
+        running: false,
+        summary: {
+          succeeded: Number(summary.succeeded || 0),
+          runlogPath: String(summary.runlogPath || ''),
+          xlsxPath: String(summary.xlsxPath || ''),
+          debugPath: String(summary.debugPath || ''),
+          cancelled: Boolean(summary.cancelled),
+        },
+      } : previous);
+      setStatus(summary.cancelled ? 'Automatic downloading cancelled. Finished sessions kept their downloads.' : 'Automatic downloading finished.');
+    });
+    setIsAutomationRunning(false);
+  }
+
+  async function cancelAutomationRun() {
+    if (DEMO_MODE || !window.blackboxGui) { return; }
+    await runWithUiError(async () => {
+      const result = await window.blackboxGui.cancelAutomationRun();
+      setStatus(result.cancelled ? 'Cancelling automatic downloading. Sessions finish their current step; downloads are kept.' : 'No automation run is active.');
+    });
+  }
+
+  async function clearAutomationDownloads() {
+    if (DEMO_MODE || !window.blackboxGui) { setStatus('Offline demo: automation folders are represented only.'); return; }
+    await runWithUiError(async () => {
+      const result = await window.blackboxGui.clearAutomationDownloads();
+      setAutomationRun(null);
+      setStatus(`Automation folder cleared (${result.removed} entries removed). A new download always starts fresh.`);
+    });
+  }
+
+  async function openAutomationDirectory() {
+    if (DEMO_MODE || !window.blackboxGui) { setStatus('Offline demo: folders are represented only.'); return; }
+    const error = await window.blackboxGui.openAutomationDirectory();
+    if (error) setErrorMessage(error);
   }
 
   async function runDemoDoctor(loginTest: boolean) {
@@ -699,100 +1049,293 @@ export function App() {
 
   async function downloadAppUpdate() { await runWithUiError(async () => { if (DEMO_MODE || !window.blackboxGui) return; setUpdateState(await window.blackboxGui.downloadUpdate()); }); }
 
-  const fileTypes = Array.from(new Set(files.map(file => (file.fileType || '').toLowerCase()).filter(Boolean)));
-  const navItems: Array<{ id: View; label: string; hint: string; icon: React.ReactNode }> = [
-    { id: 'download', label: 'Downloads', hint: 'Courses, files and saving', icon: <Icon name="download" size={21} /> },
-    { id: 'agent', label: 'Agent Export', hint: 'Read-only tools and harnesses', icon: <Icon name="agent" size={21} /> },
-    { id: 'settings', label: 'Settings', hint: 'Credentials, diagnostics and updates', icon: <Icon name="sliders" size={21} /> },
-  ];
+  async function installAppUpdate() {
+    await runWithUiError(async () => {
+      if (DEMO_MODE || !window.blackboxGui) return;
+      await window.blackboxGui.installUpdate();
+    });
+  }
 
-  function onNav(id: View) { setErrorMessage(''); setActiveView(id); if (id === 'agent') void loadAgentStatus(); }
-  const activeLabel = navItems.find(item => item.id === activeView)?.label || 'Downloads';
-  const activeIcon: IconName = activeView === 'download' ? 'download' : activeView === 'agent' ? 'agent' : 'sliders';
+  const fileTypes = Array.from(new Set(files.map(file => fileKind(file).toLowerCase()).filter(Boolean)));
+  function onNav(id: View) { setErrorMessage(''); setActiveView(id); if (id === 'agent') void loadAgentStatus(); if (id === 'automation') setAutomationTab(previous => previous); }
   const harnessInstalled = harnessSkillInstalled(agentInfo);
   const skillPath = harnessSkillPath(agentInfo);
   const showGlobalStatus = Boolean(status) && !(activeView === 'download' && (isPreparingDownload || isScanningCourses || stage === 'download'));
 
   return (
     <div className="app">
-      <aside className="rail">
-        <div className="brand"><div className="brand-mark"><AppIcon /></div><div className="brand-text"><strong>Blackbox</strong><span>blackboardchina downloader</span></div></div>
-        <nav className="rail-nav" aria-label="Primary">{navItems.map(item => <button key={item.id} className={`rail-item ${activeView === item.id ? 'is-active' : ''}`} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={item.hint} onClick={() => onNav(item.id)}><span className="rail-icon">{item.icon}</span><span className="rail-label"><span className="rail-title">{item.label}</span><span className="rail-hint">{item.hint}</span></span></button>)}</nav>
-        <div className="rail-foot"><div className="rail-version">v{version || '...'}</div><div className="rail-paths"><button className="linklike" onClick={openDownloads} title={paths.downloads}>Downloads</button><span className="sep">/</span><button className="linklike" onClick={openLogs} title={paths.logs}>Logs</button></div><p className="rail-note">Educational use only. Use responsibly.</p></div>
-      </aside>
+      <DotWave />
+      <WorkspaceNavigation active={activeView} onNavigate={onNav} />
 
       <main className="stage">
-        <header className="topbar"><div className="topbar-crumb"><h1><Icon name={activeIcon} size={22} /> {activeLabel}</h1></div><div className="topbar-meta"><span className="pill pill-soft">{version || 'Loading...'}</span>{DEMO_MODE && <span className="pill pill-demo">Offline demo</span>}{hasCredentials ? <span className="pill pill-ok"><Icon name="shield" size={14} /> Credentials ready</span> : <span className="pill pill-warn"><Icon name="key" size={14} /> Credentials needed</span>}</div></header>
+        <WorkspaceHeading active={activeView} credentials={hasCredentials} version={version} demo={DEMO_MODE} />
+        <Scene identity={activeView === 'download' ? `download:${stage}:${isPreparingDownload}` : activeView === 'settings' ? `settings:${settingsSection}` : activeView === 'automation' ? `automation:${automationTab}` : activeView} >
         {showGlobalStatus && <div className="banner banner-info" role="status"><Icon name="info" size={16} /><span>{status}</span></div>}
         {errorMessage && <div className="banner banner-error" role="alert"><Icon name="alert" size={17} /><span><strong>Something went wrong</strong>{errorMessage}</span></div>}
         {activeView === 'settings' && settingsSection === 'diagnostics' && diagnosticsProgress && <div className="diagnostics-progress-top" data-testid="diagnostics-progress"><ProgressBar label={diagnosticsProgress.running ? (diagnosticsProgress.loginTest ? 'Running diagnostics and login test' : 'Running diagnostics') : 'Diagnostics complete'} value={diagnosticsPercent} detail={`${diagnosticsProgress.completed} / ${diagnosticsProgress.total}`} subdetail={diagnosticsProgress.current} /></div>}
 
-        {activeView === 'download' && stage === 'ready' && isPreparingDownload && <section className="view download-launch" aria-live="polite" data-testid="download-launch"><div className="panel launch-panel"><div className="launch-hero"><div className="launch-visual"><div className="launch-orbit"><AppIcon /></div></div><div className="launch-copy"><h2>Preparing your course list</h2><p>{status || 'Connecting to Blackboard and loading the courses available to you.'}</p></div></div><ProgressBar label={preparationProgress?.label || 'Starting'} value={preparationProgress ? (preparationProgress.completed / preparationProgress.total) * 100 : 8} indeterminate={!preparationProgress} detail={preparationProgress ? `${preparationProgress.completed} of ${preparationProgress.total}` : 'Working'} /><div className="launch-stages">{['Connect', 'Discover courses', 'Choose files'].map((label, index) => { const progress = preparationProgress?.completed || 0; const state = progress > index ? 'done' : progress === index ? 'current' : 'todo'; return <div key={label} className={`launch-stage is-${state}`}><span className="stage-number">{state === 'done' ? <Icon name="check" size={14} /> : index + 1}</span><span>{label}</span></div>; })}</div></div></section>}
+        {activeView === 'download' && stage === 'ready' && isPreparingDownload && <section className="view download-launch" aria-live="polite" data-testid="download-launch"><Surface className="panel launch-panel"><div className="launch-hero"><div className="launch-visual"><div className="launch-orbit"><AppIcon /></div></div><div className="launch-copy"><h2>Preparing your course list</h2><p>{status || 'Connecting to Blackboard and loading the courses available to you.'}</p></div></div><ProgressBar label={preparationProgress?.label || 'Starting'} value={preparationProgress ? (preparationProgress.completed / preparationProgress.total) * 100 : 8} indeterminate={!preparationProgress} detail={preparationProgress ? `${preparationProgress.completed} of ${preparationProgress.total}` : 'Working'} /><div className="launch-stages">{['Connect', 'Discover courses', 'Choose files'].map((label, index) => { const progress = preparationProgress?.completed || 0; const state = progress > index ? 'done' : progress === index ? 'current' : 'todo'; return <div key={label} className={`launch-stage is-${state}`}><span className="stage-number">{state === 'done' ? <Icon name="check" size={14} /> : index + 1}</span><span>{label}</span></div>; })}</div></Surface></section>}
 
-        {activeView === 'download' && stage === 'ready' && !isPreparingDownload && <section className="view"><div className="panel ready-panel"><div className="ready-main"><span className="ready-icon"><AppIcon /></span><div><h2>Ready to download</h2><p>Choose courses, review files, and save documents to your configured folder.</p></div></div><div className="ready-actions"><button className="btn-primary btn-lg" onClick={hasCredentials ? beginDownload : () => { setActiveView('settings'); setSettingsSection('credentials'); }}><Icon name={hasCredentials ? 'download' : 'key'} size={17} />{hasCredentials ? 'Start a download' : 'Open credentials'}</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={17} /> Open downloads</button><button className="btn-danger" onClick={clearDownloads}><Icon name="x" size={17} /> Clear downloaded files</button></div><dl className="ready-meta"><div><dt>Access</dt><dd>{hasCredentials ? 'Credentials ready' : 'Credentials required'}</dd></div><div><dt>Save to</dt><dd className="mono">{paths.downloads || config.downloadDir || '...'}</dd></div></dl></div></section>}
+        {activeView === 'download' && stage === 'ready' && !isPreparingDownload && <section className="view"><Surface className="panel ready-panel"><div className="ready-main"><span className="ready-icon"><Icon name="download" size={24} /></span><div><h2>Ready to download</h2><p>Choose courses, review files, and save documents to your configured folder.</p></div></div><div className="ready-actions"><Action className="btn-primary btn-lg" onClick={hasCredentials ? beginDownload : () => { setActiveView('settings'); setSettingsSection('credentials'); }}><Icon name={hasCredentials ? 'download' : 'key'} size={17} />{hasCredentials ? 'Start a download' : 'Open credentials'}</Action><Action className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={17} /> Open downloads</Action><Action className="btn-danger" onClick={clearDownloads}><Icon name="x" size={17} /> Clear downloaded files</Action></div><dl className="ready-meta"><div><dt>Access</dt><dd>{hasCredentials ? 'Credentials ready' : 'Credentials required'}</dd></div><div><dt>Save to</dt><dd className="mono">{paths.downloads || config.downloadDir || '...'}</dd></div></dl></Surface></section>}
 
-        {activeView === 'settings' && <section className="view settings-view"><nav className="settings-tabs" aria-label="Settings sections">{(['credentials', 'courses', 'diagnostics', 'updates'] as SettingsSection[]).map(section => <button key={section} className={settingsSection === section ? 'is-active' : ''} onClick={() => setSettingsSection(section)}>{section === 'credentials' ? 'Credentials' : section === 'courses' ? 'Courses' : section === 'diagnostics' ? 'Diagnostics' : 'Updates'}</button>)}</nav>
-          <div className="settings-utility"><span>Manage local Blackbox data</span><button className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</button></div>
+        {activeView === 'settings' && <section className="view settings-view"><nav className="settings-tabs" aria-label="Settings sections">{(['credentials', 'courses', 'diagnostics', 'updates'] as SettingsSection[]).map(section => <Action key={section} className={settingsSection === section ? 'is-active' : ''} aria-current={settingsSection === section ? 'page' : undefined} onClick={() => setSettingsSection(section)}>{section === 'credentials' ? 'Credentials' : section === 'courses' ? 'Course filter' : section === 'diagnostics' ? 'Diagnostics' : 'Updates'}</Action>)}</nav>
 
           {settingsSection === 'credentials' && (
-            <div className="panel settings-panel" data-testid="credentials-panel">
+            <Surface className="panel settings-panel" data-testid="credentials-panel">
               <div className="surface-intro"><div><h2>Account access</h2><p>Stored locally on this machine. Your password is kept in the OS secure store.</p></div><span className={`state-badge ${hasCredentials ? 'state-good' : 'state-warn'}`}>{hasCredentials ? 'Ready' : 'Needs setup'}</span></div>
               <div className="form-grid credentials-form">
                 <label className="field"><span className="field-label"><Icon name="key" size={14} /> Username / G-number</span><input value={config.username} onChange={event => setConfig(previous => ({ ...previous, username: event.target.value }))} placeholder="g12345678" autoComplete="username" /></label>
-                <label className="field"><span className="field-label"><Icon name="lock" size={14} /> Password</span><span className="password-input"><input type={showPassword ? 'text' : 'password'} value={config.password} onFocus={event => { if (config.password === SAVED_PASSWORD_MASK) event.currentTarget.select(); }} onChange={event => { setPasswordStored(false); setPasswordReadable(Boolean(event.target.value)); setPasswordError(''); setConfig(previous => ({ ...previous, password: event.target.value })); }} placeholder="Enter password" autoComplete="current-password" /><button type="button" className="input-action" aria-label={showPassword ? 'Hide password' : 'Show password'} title={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(value => !value)}><Icon name={showPassword ? 'eye-off' : 'eye'} size={17} /></button></span><span className="field-help">{passwordError || (passwordStored ? (passwordReadable ? 'Saved password loaded. It is hidden by default.' : 'A saved password is present but cannot be unlocked on this system. Re-enter it to repair secure storage.') : config.password ? 'Password entered. It is hidden by default.' : 'No password saved yet.')}</span></label>
-                <div className="field field-wide"><span className="field-label"><Icon name="folder" size={14} /> Download directory</span><div className="path-editor"><input data-testid="download-directory-input" value={config.downloadDir} onChange={event => setConfig(previous => ({ ...previous, downloadDir: event.target.value }))} /><div className="directory-actions"><button className="btn-secondary" onClick={chooseDownloadDirectory}><Icon name="folder" size={16} /> Choose folder</button><button className="btn-ghost" onClick={openDownloads}><Icon name="open" size={16} /> Open directory</button></div></div><span className="field-help">Files will be saved here. Choose a folder or edit the path, then save settings.</span></div>
+                <label className="field"><span className="field-label"><Icon name="lock" size={14} /> Password</span><span className="password-input"><input type={showPassword ? 'text' : 'password'} value={config.password} onFocus={event => { if (config.password === SAVED_PASSWORD_MASK) event.currentTarget.select(); }} onChange={event => { setPasswordStored(false); setPasswordReadable(Boolean(event.target.value)); setPasswordError(''); setConfig(previous => ({ ...previous, password: event.target.value })); }} placeholder="Enter password" autoComplete="current-password" /><Action type="button" className="input-action" aria-label={showPassword ? 'Hide password' : 'Show password'} title={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(value => !value)}><Icon name={showPassword ? 'eye-off' : 'eye'} size={17} /></Action></span><span className="field-help">{passwordError || (passwordStored ? (passwordReadable ? 'Saved password loaded. It is hidden by default.' : 'A saved password is present but cannot be unlocked on this system. Re-enter it to repair secure storage.') : config.password ? 'Password entered. It is hidden by default.' : 'No password saved yet.')}</span></label>
+                <div className="field field-wide"><span className="field-label"><Icon name="folder" size={14} /> Download directory</span><div className="path-editor"><input data-testid="download-directory-input" value={config.downloadDir} onChange={event => setConfig(previous => ({ ...previous, downloadDir: event.target.value }))} /><div className="directory-actions"><Action className="btn-secondary" onClick={chooseDownloadDirectory}><Icon name="folder" size={16} /> Choose folder</Action><Action className="btn-ghost" onClick={openDownloads}><Icon name="open" size={16} /> Open directory</Action></div></div><span className="field-help">Files will be saved here. Choose a folder or edit the path, then save settings.</span></div>
+                <div className="field field-wide"><span className="field-label"><Icon name="gauge" size={14} /> Background animation</span><DotWaveSetting mode={dotMode} onChange={mode => { setDotMode(mode); saveDotWaveMode(mode); }} /><span className="field-help">A slow dot wave behind the interface. Choose Still or Off to save power; it also stays still when your system asks for reduced motion.</span></div>
                 <div className="field field-wide"><span id="browser-mode-label" className="field-label"><Icon name="monitor" size={14} /> Browser mode</span><BrowserModeSlider headless={config.headless} onChange={headless => setConfig(previous => ({ ...previous, headless }))} /><span className="field-help">Headless is the default and keeps the browser hidden. Use Visible when you need to watch a Blackboard sign-in or troubleshoot it.</span></div>
               </div>
-              <div className="btn-row"><button className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save settings</button><button className="btn-secondary" onClick={() => saveSettings(true)}><Icon name="shield" size={17} /> Save and test login</button><button className="btn-danger" onClick={resetCredentials}><Icon name="refresh" size={17} /> Reset credentials</button></div>
-            </div>
+              <div className="btn-row"><Action className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save settings</Action><Action className="btn-secondary" onClick={() => saveSettings(true)}><Icon name="shield" size={17} /> Save and test login</Action><Action className="btn-danger" onClick={resetCredentials}><Icon name="refresh" size={17} /> Reset credentials</Action></div>
+            </Surface>
           )}
 
           {settingsSection === 'courses' && (
-            <div className="panel settings-panel" data-testid="course-settings-panel">
-              <div className="surface-intro"><div><h2>Course filters</h2><p>Scan your Blackboard course list and block courses you no longer want Blackbox to check.</p></div><span className={'state-badge ' + (config.blockedCourses.length ? 'state-warn' : 'state-neutral')}>{config.blockedCourses.length ? config.blockedCourses.length + ' blocked' : 'None blocked'}</span></div>
-              <div className="course-block-actions"><button className="btn-primary" disabled={isScanningBlockedCourses} onClick={scanBlockedCourses}><Icon name="scan" size={17} className={isScanningBlockedCourses ? 'is-spinning' : ''} /> {isScanningBlockedCourses ? 'Scanning courses...' : 'Scan available courses'}</button><span className="field-help">Blocked courses stay out of Downloads until you unblock and save them.</span></div>
+            <Surface className="panel settings-panel" data-testid="course-settings-panel">
+              <div className="surface-intro"><div><h2>Course filter</h2><p>Hide courses you never want to download. Filtered courses are removed from the course list in Downloads.</p></div><span className={'state-badge ' + (config.blockedCourses.length ? 'state-warn' : 'state-neutral')}>{config.blockedCourses.length ? config.blockedCourses.length + ' filtered out' : 'No courses filtered'}</span></div>
+              <div className="course-block-actions"><Action className="btn-primary" disabled={isScanningBlockedCourses} onClick={scanBlockedCourses}><Icon name="scan" size={17} className={isScanningBlockedCourses ? 'is-spinning' : ''} /> {isScanningBlockedCourses ? 'Scanning courses...' : 'Scan available courses'}</Action><span className="field-help">Tick a course to filter it out of Downloads. Untick it and save to bring it back.</span></div>
               <div className="course-block-list" aria-busy={isScanningBlockedCourses}>
                 {blockedCourseRows.map(course => {
                   const blocked = config.blockedCourses.some(candidate => candidate.id === course.id);
-                  return <label key={course.id} className={'list-row ' + (blocked ? 'is-selected' : '')} title={course.name}><input type="checkbox" checked={blocked} disabled={isScanningBlockedCourses} onChange={() => toggleBlockedCourse(course)} /><span className="list-index"><Icon name={blocked ? 'x-circle' : 'book'} size={15} /></span><span className="list-name">{course.name}</span><span className={'list-state ' + (blocked ? 'is-on' : '')}>{blocked ? 'Blocked' : 'Available'}</span></label>;
+                  return <label key={course.id} className={'list-row ' + (blocked ? 'is-selected' : '')} title={course.name}><input type="checkbox" checked={blocked} disabled={isScanningBlockedCourses} onChange={() => toggleBlockedCourse(course)} /><span className="list-index"><Icon name={blocked ? 'x-circle' : 'book'} size={15} /></span><span className="list-name">{course.name}</span><span className={'list-state ' + (blocked ? 'is-on' : '')}>{blocked ? 'Filtered out' : 'Shown'}</span></label>;
                 })}
                 {blockedCourseRows.length === 0 && <div className="empty-state"><Icon name="book" size={23} /><strong>No course list yet</strong><span>Scan your available courses to choose permanent filters.</span></div>}
               </div>
-              <div className="btn-row"><button className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save course filters</button><button className="btn-ghost" onClick={() => setConfig(previous => ({ ...previous, blockedCourses: [] }))} disabled={config.blockedCourses.length === 0}><Icon name="refresh" size={17} /> Unblock all</button></div>
-            </div>
+              <div className="btn-row"><Action className="btn-primary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save course filters</Action><Action className="btn-ghost" onClick={() => setConfig(previous => ({ ...previous, blockedCourses: [] }))} disabled={config.blockedCourses.length === 0}><Icon name="refresh" size={17} /> Clear filter</Action></div>
+            </Surface>
           )}
 
-          {settingsSection === 'diagnostics' && <div className="panel settings-panel" data-testid="diagnostics-panel"><div className="surface-intro"><div><h2>Environment checks</h2><p>If Blackboard is not working, run a check here to pinpoint what is failing.</p></div><span className={`state-badge ${doctorRows.length ? 'state-good' : 'state-neutral'}`}>{doctorRows.length ? `${doctorRows.length} results` : 'Not run'}</span></div><div className="btn-row"><button className="btn-primary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(false)}><Icon name="scan" size={17} /> Run checks</button><button className="btn-secondary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(true)}><Icon name="shield" size={17} /> Run and login test</button></div>{doctorRows.length > 0 ? <ul className="checks">{doctorRows.map((row, index) => <li key={`${row.message}-${index}`} className={`check check-${row.status}`}><span className="check-dot"><Icon name={row.status === 'pass' ? 'check' : row.status === 'warn' ? 'warning' : 'x'} size={13} /></span><span className="check-msg">{row.message}</span>{row.required === false && <span className="check-optional">optional</span>}</li>)}</ul> : <p className="empty-inline">No checks run yet.</p>}</div>}
+          {settingsSection === 'diagnostics' && <Surface className="panel settings-panel" data-testid="diagnostics-panel"><div className="surface-intro"><div><h2>Environment checks</h2><p>If Blackboard is not working, run a check here to pinpoint what is failing.</p></div><span className={`state-badge ${doctorRows.length ? 'state-good' : 'state-neutral'}`}>{doctorRows.length ? `${doctorRows.length} results` : 'Not run'}</span></div><div className="btn-row"><Action className="btn-primary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(false)}><Icon name="scan" size={17} /> Run checks</Action><Action className="btn-secondary" disabled={Boolean(diagnosticsProgress?.running)} onClick={() => runDoctor(true)}><Icon name="shield" size={17} /> Run and login test</Action></div>{doctorRows.length > 0 ? <ul className="checks">{doctorRows.map((row, index) => <li key={`${row.message}-${index}`} className={`check check-${row.status}`}><span className="check-dot"><Icon name={row.status === 'pass' ? 'check' : row.status === 'warn' ? 'warning' : 'x'} size={13} /></span><span className="check-msg">{row.message}</span>{row.required === false && <span className="check-optional">optional</span>}</li>)}</ul> : <p className="empty-inline">No checks run yet.</p>}</Surface>}
 
-          {settingsSection === 'updates' && <div className="panel settings-panel" data-testid="updates-panel"><div className="surface-intro"><div><h2>Application updates</h2><p>Keep the desktop app current without interrupting a download.</p></div><span className="state-badge state-neutral">v{version || '...'}</span></div><div className="update-summary"><div><span>Status</span><strong>{String(updateState.status || 'idle')}</strong></div>{updateState.version != null && <div><span>Available</span><strong>{String(updateState.version)}</strong></div>}</div>{updateState.message != null && <p className="inline-message">{String(updateState.message)}</p>}{updateState.status === 'downloading' && <ProgressBar label="Downloading update" value={Number(updateState.percent || 0)} detail={`${Number(updateState.percent || 0).toFixed(0)}%`} />}<label className="toggle-row"><input type="checkbox" checked={config.autoCheckUpdates} onChange={event => setConfig(previous => ({ ...previous, autoCheckUpdates: event.target.checked }))} /><span><strong>Check automatically</strong><small>Look for updates when the app starts.</small></span></label><div className="btn-row"><button className="btn-primary" disabled={updateState.status === 'checking' || updateState.status === 'downloading'} onClick={checkUpdates}><Icon name="refresh" size={17} /> Check now</button><button className="btn-secondary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save preferences</button>{updateState.status === 'available' && <button className="btn-secondary" onClick={downloadAppUpdate}><Icon name="download" size={17} /> Download update</button>}{updateState.status === 'ready' && <button className="btn-secondary" onClick={() => window.blackboxGui.installUpdate()}><Icon name="updates" size={17} /> Restart and install</button>}</div></div>}
+          {settingsSection === 'updates' && <Surface className="panel settings-panel" data-testid="updates-panel"><div className="surface-intro"><div><h2>Application updates</h2><p>Keep the desktop app current without interrupting a download.</p></div><span className="state-badge state-neutral">v{version || '...'}</span></div><div className="update-summary"><div><span>Status</span><strong>{String(updateState.status || 'idle')}</strong></div>{updateState.version != null && <div><span>Available</span><strong>{String(updateState.version)}</strong></div>}</div>{updateState.message != null && <p className="inline-message">{String(updateState.message)}</p>}{updateState.status === 'downloading' && <ProgressBar label="Downloading update" value={Number(updateState.percent || 0)} detail={`${Number(updateState.percent || 0).toFixed(0)}%`} />}<label className="toggle-row"><input type="checkbox" checked={config.autoCheckUpdates} onChange={event => setConfig(previous => ({ ...previous, autoCheckUpdates: event.target.checked }))} /><span><strong>Check automatically</strong><small>Look for updates when the app starts.</small></span></label><div className="btn-row"><Action className="btn-primary" disabled={updateState.status === 'checking' || updateState.status === 'downloading'} onClick={checkUpdates}><Icon name="refresh" size={17} /> Check now</Action><Action className="btn-secondary" onClick={() => saveSettings(false)}><Icon name="check" size={17} /> Save preferences</Action>{updateState.status === 'available' && <Action className="btn-secondary" onClick={downloadAppUpdate}><Icon name="download" size={17} /> Download update</Action>}{updateState.status === 'ready' && <Action className="btn-secondary" onClick={installAppUpdate}><Icon name="updates" size={17} /> Restart and install</Action>}</div></Surface>}
         </section>}
 
-{activeView === 'agent' && <section className="view" data-testid="agent-panel"><div className="panel agent-panel"><div className="surface-intro"><div><h2>Read-only course context</h2><p>Export instructions, assignments, announcements, and attachments for coding agents. The export never submits work or changes Blackboard.</p></div><span className={`state-badge ${agentInfo?.configured ? 'state-good' : 'state-warn'}`}>{agentInfo?.configured ? 'Configured' : 'Setup needed'}</span></div><div className="agent-summary"><div><span>Workflow</span><strong>{agentInfo?.busy ? 'Busy' : 'Idle'}</strong></div><div><span>Export folder</span><strong className="mono">{String(agentInfo?.downloadDir || paths.downloads || config.downloadDir)}</strong></div></div><div className="agent-actions"><button className="btn-primary" onClick={syncAgent} disabled={Boolean(agentInfo?.busy) || !agentInfo?.configured}><Icon name="cloud-download" size={17} /> Build export</button><button className="btn-secondary" onClick={loadAgentStatus}><Icon name="refresh" size={17} /> Refresh status</button></div><div className="integration-row"><div><strong>Harness skill</strong><p>Install the managed skill in <code>~/.agents/skills</code>. Compatible harnesses will discover it automatically.</p>{skillPath && <span className="mono">{skillPath}</span>}</div><div className="integration-actions"><span className={`state-badge ${harnessInstalled ? 'state-good' : 'state-neutral'}`}>{harnessInstalled ? 'Installed' : 'Not installed'}</span>{harnessInstalled ? <button className="btn-danger" onClick={removeHarness}><Icon name="x" size={16} /> Remove from harnesses</button> : <button className="btn-secondary" onClick={installHarness}><Icon name="check" size={16} /> Install for harnesses</button>}</div></div>{agentOutput && <div className="code-block"><pre>{JSON.stringify(agentOutput, null, 2)}</pre></div>}<p className="field-help">MCP command: <code>Blackbox.exe --mcp</code> when using the packaged app.</p></div></section>}
+{activeView === 'agent' && <section className="view" data-testid="agent-panel"><Surface className="panel agent-panel"><div className="surface-intro"><div><h2>Read-only course context</h2><p>Export instructions, assignments, announcements, and attachments for coding agents. The export never submits work or changes Blackboard.</p></div><span className={`state-badge ${agentInfo?.configured ? 'state-good' : 'state-warn'}`}>{agentInfo?.configured ? 'Configured' : 'Setup needed'}</span></div><div className="agent-summary"><div><span>Workflow</span><strong>{agentInfo?.busy ? 'Busy' : 'Idle'}</strong></div><div><span>Export folder</span><strong className="mono">{String(agentInfo?.downloadDir || paths.downloads || config.downloadDir)}</strong></div></div><div className="agent-actions"><Action className="btn-primary" onClick={syncAgent} disabled={Boolean(agentInfo?.busy) || !agentInfo?.configured}><Icon name="cloud-download" size={17} /> Build export</Action><Action className="btn-secondary" onClick={loadAgentStatus}><Icon name="refresh" size={17} /> Refresh status</Action></div><div className="integration-row"><div><strong>Harness skill</strong><p>Install the managed skill in <code>~/.agents/skills</code>. Compatible harnesses will discover it automatically.</p>{skillPath && <span className="mono">{skillPath}</span>}</div><div className="integration-actions"><span className={`state-badge ${harnessInstalled ? 'state-good' : 'state-neutral'}`}>{harnessInstalled ? 'Installed' : 'Not installed'}</span>{harnessInstalled ? <Action className="btn-danger" onClick={removeHarness}><Icon name="x" size={16} /> Remove from harnesses</Action> : <Action className="btn-secondary" onClick={installHarness}><Icon name="check" size={16} /> Install for harnesses</Action>}</div></div>{agentOutput && <div className="code-block"><pre>{JSON.stringify(agentOutput, null, 2)}</pre></div>}</Surface></section>}
 
-        {activeView === 'download' && (stage === 'courses' || stage === 'files' || stage === 'download' || stage === 'summary') && <section className="view download-view"><div className="download-stepper-row"><Stepper current={wizardStepIndex(stage)} />{stage !== 'download' && <button className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</button>}</div>
-          {stage === 'courses' && <div className="panel selection-panel" data-testid="course-list-panel"><div className="selection-head"><div><h2>Choose courses</h2><p>Select the courses to scan for files.</p></div><CountSummary items={[`${visibleCourses.length} shown`, `${selectedCourseIds.size} selected`, `${courses.length} total`]} /></div>{isScanningCourses && discoveryProgress && <ProgressBar label={discoveryProgress.phase === 'metadata' ? 'Reading file details' : 'Scanning course content'} value={discoveryPercent} detail={`${discoveryProgress.completed} / ${discoveryProgress.total}`} subdetail={discoveryProgress.currentSection || discoveryProgress.currentCourse || 'Working through the selected courses'} dataTestId="discovery-progress" />}<div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter courses" value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label><div className="btn-row btn-row-inline"><button className="btn-secondary" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set(courses.map(course => course.id)))}><Icon name="check-square" size={16} /> Select all</button><button className="btn-ghost" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set())}><Icon name="x" size={16} /> Clear</button><button className="btn-primary" disabled={selectedCourses.length === 0 || isScanningCourses} onClick={runScanFiles}><Icon name="scan" size={16} className={isScanningCourses ? 'is-spinning' : ''} /> {isScanningCourses ? 'Scanning...' : 'Scan selected'}</button></div></div><div className="list" aria-busy={isScanningCourses}>{visibleCourses.map((course, index) => { const selected = selectedCourseIds.has(course.id); return <label key={course.id} className={`list-row ${selected ? 'is-selected' : ''}`} title={course.name}><input type="checkbox" checked={selected} disabled={isScanningCourses} onChange={event => setSelectedCourseIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(course.id); else next.delete(course.id); return next; })} /><span className="list-index">{String(index + 1).padStart(2, '0')}</span><span className="list-name">{course.name}</span><span className={`list-state ${selected ? 'is-on' : ''}`}>{selected ? 'Selected' : 'Skipped'}</span></label>; })}{visibleCourses.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No courses found</strong><span>{courses.length ? 'Try a different search.' : 'Start a download to discover courses.'}</span></div>}</div></div>}
+{activeView === 'automation' && <section className="view" data-testid="automation-panel">
+  <nav className="settings-tabs" aria-label="Automation sections">
+    <Action className={automationTab === 'downloads' ? 'is-active' : ''} aria-current={automationTab === 'downloads' ? 'page' : undefined} onClick={() => setAutomationTab('downloads')}>Downloads</Action>
+    <Action className={automationTab === 'settings' ? 'is-active' : ''} aria-current={automationTab === 'settings' ? 'page' : undefined} onClick={() => setAutomationTab('settings')}>Settings</Action>
+  </nav>
+
+  {automationTab === 'settings' && (
+    <Surface className="panel settings-panel" data-testid="automation-settings-panel">
+      <div className="surface-intro"><div><h2>Automation settings</h2><p>Fully independent from your normal Blackbox settings: own G-numbers, own download directory, own limits.</p></div><span className={'state-badge ' + (automationSettings.gnumbers.length ? 'state-good' : 'state-warn')}>{automationSettings.gnumbers.length ? automationSettings.gnumbers.length + ' G-numbers' : 'No G-numbers'}</span></div>
+      <div className="form-grid">
+        <div className="field field-wide"><span className="field-label"><Icon name="key" size={14} /> G-numbers</span>
+          <div className="btn-row">
+            <Action className="btn-secondary" onClick={openAutomationGnumberModal} data-testid="automation-paste-gnumbers"><Icon name="file" size={15} /> Paste G-number list</Action>
+            <span className="field-help">{automationSettings.gnumbers.length > 0 ? `${automationSettings.gnumbers.length} saved. Each number logs in with itself as the password.` : 'Paste one G-number per line.'}</span>
+          </div>
+        </div>
+        <div className="field field-wide"><span className="field-label"><Icon name="folder" size={14} /> Automation download directory</span>
+          <div className="path-editor"><input data-testid="automation-directory-input" value={automationSettings.downloadDir} onChange={event => setAutomationSettings(previous => ({ ...previous, downloadDir: event.target.value }))} placeholder="D:\\Blackbox-Automation" /><div className="directory-actions"><Action className="btn-secondary" onClick={chooseAutomationDirectory}><Icon name="folder" size={16} /> Choose folder</Action><Action className="btn-ghost" onClick={openAutomationDirectory}><Icon name="open" size={16} /> Open directory</Action></div></div>
+          <span className="field-help">Must be different from the normal download directory ({automationNormalDir || 'see Settings'}).</span>
+        </div>
+        <label className="field"><span className="field-label"><Icon name="file" size={14} /> Max file size per file (MB)</span>
+          <input type="number" min={1} value={automationSettings.maxFileSizeMB} onChange={event => setAutomationSettings(previous => ({ ...previous, maxFileSizeMB: Math.max(1, Number(event.target.value) || 1) }))} />
+          <span className="field-help">Default 100 MB. Larger files are skipped.</span>
+        </label>
+        <label className="field"><span className="field-label"><Icon name="x-circle" size={14} /> Excluded extensions</span>
+          <input value={automationSettings.excludedExtensionsCsv} onChange={event => setAutomationSettings(previous => ({ ...previous, excludedExtensionsCsv: event.target.value }))} placeholder=".mp3, .mp4" />
+          <span className="field-help">Comma-separated. Files ending in these extensions are never downloaded.</span>
+        </label>
+      </div>
+      <div className="btn-row"><Action className="btn-primary" onClick={() => saveAutomationSettings(false)}><Icon name="check" size={17} /> Save automation settings</Action></div>
+    </Surface>
+  )}
+
+  {automationTab === 'downloads' && (
+    <Surface className="panel settings-panel" data-testid="automation-downloads-panel">
+      <div className="surface-intro"><div><h2>Automatic downloading</h2><p>For every G-number, Blackbox logs in, lists the courses, and downloads everything for each unique course exactly once — in parallel sessions.</p></div><span className={`state-badge ${isAutomationRunning ? 'state-warn' : 'state-neutral'}`}>{isAutomationRunning ? 'Running' : 'Idle'}</span></div>
+      <div className="btn-row">
+        <Action className="btn-primary btn-lg" data-testid="automation-start" disabled={isAutomationRunning || automationSettings.gnumbers.length === 0 || !automationSettings.downloadDir} onClick={startAutomationRun}><Icon name="cloud-download" size={17} /> Automatic downloading</Action>
+        {isAutomationRunning && <Action className="btn-danger" data-testid="automation-cancel" onClick={cancelAutomationRun}><Icon name="x" size={16} /> Cancel download</Action>}
+        <Action className="btn-ghost" disabled={isAutomationRunning} data-testid="automation-clear" onClick={clearAutomationDownloads}><Icon name="trash" size={16} /> Clear downloads</Action>
+        <Action className="btn-ghost" onClick={openAutomationDirectory}><Icon name="folder" size={16} /> Open folder</Action>
+        {automationSettings.gnumbers.length === 0 && <span className="field-help">Save G-numbers in Automation settings first.</span>}
+      </div>
+      <p className="field-help">Starting a new download wipes the previous downloads and logs first, so every run starts fresh. Cancelling keeps everything already downloaded.</p>
+      {automationRun && (
+        <div className="automation-run" data-testid="automation-run">
+          <div className="summary-grid">
+            <div><span>G-numbers</span><strong>{automationRun.total}</strong></div>
+            <div><span>Unique courses</span><strong>{automationRun.uniqueCourses}</strong></div>
+            <div><span>Files downloaded</span><strong className="text-good">{automationRun.filesDownloaded}</strong></div>
+            <div><span>Files failed</span><strong className="text-bad">{automationRun.filesFailed}</strong></div>
+            <div><span>Files skipped</span><strong className="text-warn">{automationRun.filesSkipped}</strong></div>
+            <div><span>Instructions</span><strong>{automationRun.instructionsDownloaded}</strong></div>
+            <div><span>Failed logins</span><strong className="text-bad">{automationRun.failedLogins.length}</strong></div>
+            <div><span>Sessions</span><strong>{automationRun.parallelSessions}</strong></div>
+          </div>
+          <div className="list automation-list">
+            {Object.values(automationRun.entries).map(entry => (
+              <div key={entry.gnumber} className="list-row automation-row" data-testid={`automation-row-${entry.gnumber}`}>
+                <span className="mono">{entry.gnumber}</span>
+                <span className={`state-badge ${entry.status === 'done' ? 'state-good' : entry.status === 'failed' ? 'pill-warn' : entry.status === 'pending' ? 'state-neutral' : 'pill-warn'}`}>{entry.status}</span>
+                <span className="ellipsis" title={entry.claimedCourses.join(', ') || entry.courses.join(', ')}>
+                  {entry.status === 'failed' ? (entry.error || 'Login failed') : `${entry.claimedCourses.length} downloading · ${entry.skippedCourses.length} already covered · ${entry.courses.length} seen`}
+                </span>
+                <span className="mono">{entry.filesDownloaded}/{entry.filesFailed}±{entry.filesSkipped}</span>
+              </div>
+            ))}
+          </div>
+          {automationRun.failedLogins.length > 0 && <ul className="checks">{automationRun.failedLogins.map(failure => <li key={failure.gnumber} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{failure.gnumber}: {failure.error}</span></li>)}</ul>}
+          {automationRun.summary && (
+            <div className="btn-row">
+              <span className="field-help">Run log: {automationRun.summary.runlogPath} · {automationRun.summary.xlsxPath} · {automationRun.summary.debugPath}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </Surface>
+  )}
+
+  {automationGnumberModal && (
+    <div className="modal-overlay" role="dialog" aria-modal="true" data-testid="automation-gnumber-modal" onClick={() => setAutomationGnumberModal(false)}>
+      <Surface className="modal-card panel" onClick={event => event.stopPropagation()}>
+        <div className="surface-intro"><div><h2>Paste G-numbers</h2><p>One per line (or comma-separated). Each G-number logs in with itself as the password.</p></div></div>
+        <textarea
+          className="automation-gnumber-input"
+          data-testid="automation-gnumber-textarea"
+          value={automationGnumberDraft}
+          onChange={event => setAutomationGnumberDraft(event.target.value)}
+          rows={10}
+          placeholder={'g12345678\ng87654321'}
+          autoFocus
+        />
+        <span className="field-help">
+          {parsedGnumberPreview.valid.length} valid, {parsedGnumberPreview.invalid.length} invalid{parsedGnumberPreview.invalid.length > 0 ? ` (ignored: ${parsedGnumberPreview.invalid.slice(0, 5).join(', ')}${parsedGnumberPreview.invalid.length > 5 ? '…' : ''})` : ''}
+        </span>
+        <div className="btn-row">
+          <Action className="btn-primary" data-testid="automation-gnumber-save" onClick={applyAutomationGnumberDraft}><Icon name="check" size={16} /> Save list</Action>
+          <Action className="btn-ghost" onClick={() => setAutomationGnumberModal(false)}>Cancel</Action>
+        </div>
+      </Surface>
+    </div>
+  )}
+</section>}
+
+
+        {activeView === 'download' && (stage === 'courses' || stage === 'files' || stage === 'download' || stage === 'summary') && <section className="view download-view"><div className="download-stepper-row"><Stepper current={wizardStepIndex(stage)} />{stage !== 'download' && <Action className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</Action>}</div>
+          {stage === 'courses' && <Surface className="panel selection-panel" data-testid="course-list-panel"><div className="selection-head"><div><h2>Choose courses</h2><p>Select the courses to scan for files.</p></div><CountSummary items={[`${visibleCourses.length} shown`, `${selectedCourseIds.size} selected`, `${courses.length} total`]} /></div>{isScanningCourses && discoveryProgress && <ProgressBar label={discoveryProgress.phase === 'metadata' ? 'Reading file details' : 'Scanning course content'} value={discoveryPercent} detail={`${discoveryProgress.completed} / ${discoveryProgress.total}`} subdetail={discoveryProgress.currentSection || discoveryProgress.currentCourse || 'Working through the selected courses'} dataTestId="discovery-progress" />}<div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter courses" value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label><div className="btn-row btn-row-inline"><Action className="btn-secondary" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set(courses.map(course => course.id)))}><Icon name="check-square" size={16} /> Select all</Action><Action className="btn-ghost" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set())}><Icon name="x" size={16} /> Clear</Action><Action className="btn-primary" disabled={selectedCourses.length === 0 || isScanningCourses} onClick={runScanFiles}><Icon name="scan" size={16} className={isScanningCourses ? 'is-spinning' : ''} /> {isScanningCourses ? 'Scanning...' : 'Scan selected'}</Action></div></div><div className="list" aria-busy={isScanningCourses}>{visibleCourses.map((course, index) => { const selected = selectedCourseIds.has(course.id); return <label key={course.id} className={`list-row ${selected ? 'is-selected' : ''}`} title={course.name}><input type="checkbox" checked={selected} disabled={isScanningCourses} onChange={event => setSelectedCourseIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(course.id); else next.delete(course.id); return next; })} /><span className="list-index">{String(index + 1).padStart(2, '0')}</span><span className="list-name">{course.name}</span><span className={`list-state ${selected ? 'is-on' : ''}`}>{selected ? 'Selected' : 'Skipped'}</span></label>; })}{visibleCourses.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No courses found</strong><span>{courses.length ? 'Try a different search.' : 'Start a download to discover courses.'}</span></div>}</div></Surface>}
 
           {stage === 'files' && (
-            <div className="panel selection-panel" data-testid="file-list-panel">
-              <div className="selection-head"><div><h2>Choose files</h2><p>Review files and choose which courses also include instructional text.</p></div><CountSummary items={[`${selectableFiles.length} shown`, `${selectedFileUrls.size} selected`, `${files.length} total`]} /></div>
-              <CourseInstructionPicker courses={selectedCourses} selectedIds={selectedInstructionCourseIds} onToggle={courseId => setSelectedInstructionCourseIds(previous => { const next = new Set(previous); if (next.has(courseId)) next.delete(courseId); else next.add(courseId); return next; })} onSelectAll={() => setSelectedInstructionCourseIds(new Set(selectedCourses.map(course => course.id)))} onClear={() => setSelectedInstructionCourseIds(new Set())} />
-              <div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter files" value={fileSearch} onChange={event => setFileSearch(event.target.value)} /></label><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">All types</option>{fileTypes.map(type => <option key={type} value={type}>{type.toUpperCase()}</option>)}</select><div className="btn-row btn-row-inline"><button className="btn-secondary" onClick={() => setSelectedFileUrls(new Set(files.map(file => file.url)))}><Icon name="check-square" size={16} /> Select all files</button><button className="btn-ghost" onClick={() => setSelectedFileUrls(new Set())}><Icon name="x" size={16} /> Clear files</button><button className="btn-primary" data-testid="download-selected" disabled={selectedFiles.length === 0 && selectedInstructionCourses.length === 0} onClick={startDownload}><Icon name="download" size={16} /> {selectedFiles.length > 0 && selectedInstructionCourses.length > 0 ? `Download ${selectedFiles.length} + text` : selectedFiles.length > 0 ? `Download ${selectedFiles.length}` : 'Download instructions'}</button></div></div>
-              <div className="table"><div className="table-head"><span /><span>Name</span><span>Type</span><span>Size</span><span>Course / section</span><span>State</span></div>{selectableFiles.map(file => { const selected = selectedFileUrls.has(file.url); return <div className={`table-row selectable ${selected ? 'is-on' : ''}`} key={file.url} role="checkbox" aria-checked={selected} tabIndex={0} onClick={() => toggleFileSelection(file.url)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleFileSelection(file.url); } }}><span><input type="checkbox" checked={selected} onClick={event => event.stopPropagation()} onChange={() => toggleFileSelection(file.url)} /></span><span className="file-name"><Icon name="file" size={15} /><span className="ellipsis">{file.name}</span></span><span>{(file.fileType || '?').toUpperCase()}</span><span>{file.size ? formatBytes(file.size) : '?'}</span><span className="ellipsis">{file.courseName} / {file.sectionName}</span><span className={`tag ${selected ? 'tag-on' : 'tag-off'}`}>{selected ? 'Selected' : 'Ignored'}</span></div>; })}{selectableFiles.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No files found</strong><span>{files.length ? 'Try a different search or type.' : 'Scan selected courses to find files.'}</span></div>}</div>
-            </div>
+            <Surface className="panel selection-panel files-panel" data-testid="file-list-panel">
+              <div className="selection-head">
+                <div>
+                  <h2>Choose files</h2>
+                  <p>Pick what to save. Files this layout already holds are marked and skipped.</p>
+                </div>
+                <CountSummary items={[`${pendingFiles.length} to save`, savedFileCount > 0 ? `${savedFileCount} saved` : `${selectableFiles.length} shown`, `${selectedFileUrls.size} selected`, `${files.length} total`]} />
+              </div>
+              <div className="file-options">
+              <CourseInstructionPicker courses={selectedCourses} selectedIds={selectedInstructionCourseIds} expanded={instructionPickerOpen} onToggleExpanded={() => setInstructionPickerOpen(previous => !previous)} onToggle={courseId => setSelectedInstructionCourseIds(previous => { const next = new Set(previous); if (next.has(courseId)) next.delete(courseId); else next.add(courseId); return next; })} onSelectAll={() => setSelectedInstructionCourseIds(new Set())} onClear={() => setSelectedInstructionCourseIds(new Set())} />
+              <div className="layout-choice" data-testid="layout-choice">
+                <span className="layout-choice-icon"><Icon name="folder" size={16} /></span>
+                <div className="layout-choice-copy">
+                  <strong>Download layout</strong>
+                  <small>{keepHierarchy ? 'Keeps the Blackboard course / section / folder structure.' : 'Puts every file directly in its course folder.'}</small>
+                </div>
+                <div className={`segmented ${keepHierarchy ? 'is-first' : 'is-second'}`} role="radiogroup" aria-label="Download layout">
+                  <span className="segmented-thumb" aria-hidden="true" />
+                  <Action type="button" role="radio" aria-checked={keepHierarchy} aria-label="Keep the course folder structure" data-testid="layout-hierarchy" className={keepHierarchy ? 'is-on' : ''} onClick={() => chooseLayout('hierarchy')}>Course folders</Action>
+                  <Action type="button" role="radio" aria-checked={!keepHierarchy} aria-label="Save all files flat in the course folder" data-testid="layout-flat" className={keepHierarchy ? '' : 'is-on'} onClick={() => chooseLayout('flat')}>Flat files</Action>
+                </div>
+              </div>
+              </div>
+              <div className="toolbar file-toolbar">
+                <label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter files" value={fileSearch} onChange={event => setFileSearch(event.target.value)} /></label>
+                <select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} aria-label="Filter by file type">
+                  <option value="all">All types</option>
+                  {fileTypes.map(type => <option key={type} value={type}>{type.toUpperCase()}</option>)}
+                </select>
+                <select aria-label="Sort files" data-testid="sort-files" value={sortKey} onChange={event => { const key = event.target.value as SortKey; setSortKey(key); setSortDesc(key === 'size'); }}>
+                  <option value="default">Sort: default</option>
+                  <option value="name">Sort: name</option>
+                  <option value="type">Sort: type</option>
+                  <option value="size">Sort: size</option>
+                  <option value="course">Sort: course</option>
+                </select>
+                {sortKey !== 'default' && <Action type="button" className="btn-chip" aria-label={sortDesc ? 'Sorted descending, switch to ascending' : 'Sorted ascending, switch to descending'} onClick={() => setSortDesc(previous => !previous)}>{sortDesc ? '↓ Descending' : '↑ Ascending'}</Action>}
+                {savedFileCount > 0 && (
+                  <Action type="button" className={`btn-chip ${showSavedFiles ? 'is-on' : ''}`} aria-pressed={showSavedFiles} onClick={() => setShowSavedFiles(previous => !previous)}>
+                    <Icon name={showSavedFiles ? 'eye-off' : 'eye'} size={15} /> {showSavedFiles ? 'Hide saved' : `Show ${savedFileCount} saved`}
+                  </Action>
+                )}
+                <div className="btn-row btn-row-inline">
+                  <Action className="btn-secondary" disabled={pendingFiles.length === 0} onClick={() => setSelectedFileUrls(new Set(pendingFiles.map(file => file.url)))}><Icon name="check-square" size={16} /> Select all</Action>
+                  <Action className="btn-ghost" disabled={selectedFileUrls.size === 0} onClick={() => setSelectedFileUrls(new Set())}><Icon name="x" size={16} /> Clear</Action>
+                </div>
+              </div>
+              <div className="table">
+                <div className="table-head"><span /><SortHead label="Name" active={sortKey === 'name'} desc={sortDesc} onClick={() => toggleSort('name')} /><SortHead label="Type" active={sortKey === 'type'} desc={sortDesc} onClick={() => toggleSort('type')} /><SortHead label="Size" className="num" active={sortKey === 'size'} desc={sortDesc} onClick={() => toggleSort('size')} /><SortHead label="Course / section" active={sortKey === 'course'} desc={sortDesc} onClick={() => toggleSort('course')} /><span>State</span></div>
+                {sortedFiles.map(file => {
+                  const saved = savedInLayout(file.url);
+                  const selected = !saved && selectedFileUrls.has(file.url);
+                  const size = typeof file.size === 'number' ? file.size : existingByUrl[file.url]?.size;
+                  return (
+                    <div
+                      className={`table-row selectable ${selected ? 'is-on' : ''} ${saved ? 'is-saved' : ''}`}
+                      key={file.url}
+                      role="checkbox"
+                      aria-checked={selected}
+                      aria-disabled={saved || undefined}
+                      tabIndex={saved ? -1 : 0}
+                      onClick={() => toggleFileSelection(file.url)}
+                      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleFileSelection(file.url); } }}
+                    >
+                      <span><input type="checkbox" checked={selected} disabled={saved} onClick={event => event.stopPropagation()} onChange={() => toggleFileSelection(file.url)} /></span>
+                      <span className="file-name"><Icon name="file" size={15} /><span className="ellipsis">{file.name}</span></span>
+                      <span className="type-cell">{fileKind(file)}</span>
+                      <span className="num">{size ? formatBytes(size) : '—'}</span>
+                      <span className="ellipsis">{file.courseName} / {file.sectionName}</span>
+                      <span className={`tag ${saved ? 'tag-saved' : selected ? 'tag-on' : 'tag-off'}`}>{saved ? 'Saved' : selected ? 'Selected' : 'Ignored'}</span>
+                    </div>
+                  );
+                })}
+                {selectableFiles.length === 0 && (
+                  <div className="empty-state">
+                    <Icon name="search-x" size={23} />
+                    <strong>Nothing left to save</strong>
+                    <span>{files.length ? (pendingFiles.length === 0 ? 'Every file is already saved for this layout.' : 'Try a different search or type.') : 'Scan selected courses to find files.'}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="action-bar" data-testid="files-action-bar">
+                <div className="action-bar-summary">
+                  <strong>{selectedFiles.length} file{selectedFiles.length === 1 ? '' : 's'} selected</strong>
+                  <span>
+                    {selectedInstructionCourses.length > 0 ? `+ text from ${selectedInstructionCourses.length} course${selectedInstructionCourses.length === 1 ? '' : 's'}` : 'no course text'} · {keepHierarchy ? 'course folders' : 'flat files'}
+                  </span>
+                </div>
+                <Action className="btn-primary btn-lg" data-testid="download-selected" disabled={selectedFiles.length === 0 && selectedInstructionCourses.length === 0} onClick={startDownload}>
+                  <Icon name="download" size={17} />
+                  {selectedFiles.length > 0 && selectedInstructionCourses.length > 0 ? `Download ${selectedFiles.length} + text` : selectedFiles.length > 0 ? `Download ${selectedFiles.length}` : 'Download instructions'}
+                </Action>
+              </div>
+            </Surface>
           )}
 
           {stage === 'download' && (
-            <div className="panel transfer-panel" data-testid="transfer-panel">
-              <div className="transfer-head"><div><span className="transfer-status"><span className="live-dot" /> Live transfer</span><h2>{selectedRunFileCount > 0 ? 'Downloading selected content' : 'Saving course instructions'}</h2><p>{selectedRunFileCount > 0 ? 'Files and course text are being saved to your chosen folder.' : 'Every readable item in the included courses is being saved as Markdown.'}</p></div><div className="transfer-queue"><div className="queue-stat"><strong>{selectedRunFileCount}</strong><span>files queued</span></div>{selectedRunInstructionCourseCount > 0 && <div className="queue-stat queue-stat-instructions"><strong>{selectedRunInstructionCourseCount}</strong><span>courses with text</span></div>}</div></div>
+            <Surface className="panel transfer-panel" data-testid="transfer-panel">
+              <div className="transfer-head"><div><span className="transfer-status"><span className="live-dot" /> {isCancellingDownload ? 'Stopping transfer' : 'Live transfer'}</span><h2>{selectedRunFileCount > 0 ? 'Downloading selected content' : 'Saving course instructions'}</h2><p>{isCancellingDownload ? 'Finishing the current file, then keeping everything already saved.' : selectedRunFileCount > 0 ? (runLayout === 'flat' ? 'Files are being saved flat inside their course folders.' : 'Files and course text are being saved with the course folder structure.') : 'Every readable item in the included courses is being saved as Markdown.'}</p><p className="mono transfer-destination" title="Folder this run is saving into">Saving to {config.downloadDir}</p></div><div className="transfer-queue"><div className="queue-stat"><strong>{selectedRunFileCount}</strong><span>files queued</span></div>{selectedRunInstructionCourseCount > 0 && <div className="queue-stat queue-stat-instructions"><strong>{selectedRunInstructionCourseCount}</strong><span>courses with text</span></div>}</div></div>
               {selectedRunInstructionCourseCount > 0 && instructionProgress && <ProgressBar label={instructionProgress.phase === 'write' ? 'Saving course instructions' : 'Reading course instructions'} value={instructionPercent} detail={instructionProgress.phase === 'write' ? `${instructionProgress.completed} / ${instructionProgress.total} saved` : `${instructionProgress.itemsFound || 0} items found`} subdetail={instructionProgress.currentTitle || instructionProgress.currentSection || instructionProgress.currentCourse || 'Reading every selected course'} dataTestId="instruction-progress" />}
-              {selectedRunFileCount > 0 ? <><ProgressBar label="Overall file progress" value={progressPercent} detail={downloadState.totalKnownBytes > 0 ? `${formatBytes(downloadState.downloadedBytes)} / ${formatBytes(downloadState.totalKnownBytes)}` : `${countProgress} / ${selectedRunFileCount} files`} subdetail={downloadState.failed ? `${downloadState.failed} failed` : 'Transfer in progress'} dataTestId="transfer-progress" /><div className="progress-readout"><strong>{progressPercent.toFixed(1)}%</strong><span>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : 'Calculating speed...'}</span></div><div className="download-stats"><div className="download-stat"><span className="download-stat-icon"><Icon name="gauge" size={17} /></span><span><small>Speed</small><strong>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : '?'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="clock" size={17} /></span><span><small>Estimated time</small><strong>{downloadState.speed > 0 && downloadState.totalKnownBytes > 0 ? eta(remainingKnownBytes / downloadState.speed) : '?'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="file" size={17} /></span><span><small>Unknown size</small><strong>{downloadState.unknownCount}</strong></span></div></div><div className="current-file"><span className="current-file-icon"><Icon name="file" size={17} /></span><span className="current-file-label">Currently saving</span><span className="download-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong className="current-file-name">{downloadState.currentFile || 'Waiting for the first file...'}</strong></div><div className="tallies"><span className="tally tally-ok"><Icon name="check-circle" size={14} /> {downloadState.completed} done</span><span className="tally tally-skip"><Icon name="clock" size={14} /> {downloadState.skipped} skipped</span><span className="tally tally-fail"><Icon name="x-circle" size={14} /> {downloadState.failed} failed</span></div></> : <div className="instruction-only-note"><span className="download-stat-icon"><Icon name="book" size={17} /></span><span><strong>No file attachments selected</strong><small>The course instructions continue independently and will be saved as Markdown.</small></span></div>}
-              <div className="btn-row download-footer"><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</button><button className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</button></div>
-            </div>
+              {selectedRunFileCount > 0 ? <><ProgressBar label={transfer && transfer.basis === 'files' ? 'Overall progress (by files)' : 'Overall progress'} value={progressPercent} detail={transfer ? (transfer.basis === 'bytes' ? `${formatBytes(transfer.bytes)} / ${formatBytes(transfer.totalBytes)}` : `${transfer.settled} / ${transfer.total} files`) : downloadState.totalKnownBytes > 0 ? `${formatBytes(downloadState.downloadedBytes)} / ${formatBytes(downloadState.totalKnownBytes)}` : `${countProgress} / ${selectedRunFileCount} files`} subdetail={transfer ? `${transfer.settled} of ${transfer.total} files handled${transfer.retrying ? ` · ${transfer.retrying} retrying` : ''}${downloadState.failed ? ` · ${downloadState.failed} failed` : ''}` : (downloadState.failed ? `${downloadState.failed} failed` : 'Starting...')} dataTestId="transfer-progress" /><div className="progress-readout"><strong>{progressPercent.toFixed(1)}%</strong><span>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : (transfer && transfer.settled >= transfer.total ? 'Done' : 'Waiting for data...')}</span></div><div className="download-stats"><div className="download-stat"><span className="download-stat-icon"><Icon name="gauge" size={17} /></span><span><small>Speed</small><strong>{downloadState.speed > 0 ? `${formatBytes(downloadState.speed)}/s` : '–'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="clock" size={17} /></span><span><small>Estimated time</small><strong>{transfer ? (transfer.etaSeconds != null ? eta(transfer.etaSeconds) : transfer.basis === 'files' ? 'Unknown (sizes missing)' : 'Estimating...') : '–'}</strong></span></div><div className="download-stat"><span className="download-stat-icon"><Icon name="file" size={17} /></span><span><small>Unknown size</small><strong>{downloadState.unknownCount}</strong></span></div></div><div className="current-file"><span className="current-file-icon"><Icon name="file" size={17} /></span><span className="current-file-label">Currently saving</span><span className="download-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong className="current-file-name">{transfer && transfer.active.length > 0 ? transfer.active.join('  ·  ') : (downloadState.currentFile || (transfer && transfer.settled >= transfer.total ? 'Finishing up...' : 'Waiting for the first file...'))}</strong></div><div className="tallies"><span className="tally tally-ok"><Icon name="check-circle" size={14} /> {downloadState.completed} done</span><span className="tally tally-skip"><Icon name="clock" size={14} /> {downloadState.skipped} skipped{transfer && transfer.rejected > 0 ? ` (${transfer.rejected} not a supported document)` : ''}</span><span className="tally tally-fail"><Icon name="x-circle" size={14} /> {downloadState.failed} failed</span></div></> : <div className="instruction-only-note"><span className="download-stat-icon"><Icon name="book" size={17} /></span><span><strong>No file attachments selected</strong><small>The course instructions continue independently and will be saved as Markdown.</small></span></div>}
+              <div className="btn-row download-footer">{!isCancellingDownload && <Action className="btn-danger" data-testid="download-cancel" onClick={cancelDownload}><Icon name="x" size={16} /> Cancel download</Action>}{isCancellingDownload && <Action className="btn-danger" data-testid="download-cancel" disabled><Icon name="x" size={16} /> Stopping...</Action>}<Action className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</Action><Action className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</Action></div>
+            </Surface>
           )}
 
-          {stage === 'summary' && summary && <div className="panel summary-panel"><div className="surface-intro"><div><h2>Download complete</h2><p>Files and course instructions were saved in this read-only run.</p></div><span className="state-badge state-good">Finished</span></div><div className="summary-grid"><div><span>Courses scanned</span><strong>{summary.coursesSelected}</strong></div><div><span>Files found</span><strong>{summary.filesDiscovered}</strong></div><div><span>Downloaded</span><strong className="text-good">{summary.filesDownloaded}</strong></div><div><span>Skipped</span><strong className="text-warn">{summary.filesSkipped}</strong></div><div><span>Failed</span><strong className="text-bad">{summary.filesFailed}</strong></div><div><span>Instruction courses</span><strong>{summary.instructionCoursesSelected}</strong></div><div><span>Instructions saved</span><strong className="text-good">{summary.instructionsDownloaded}</strong></div><div><span>Text discovered</span><strong>{summary.instructionsDiscovered}</strong></div></div>{summary.failedFiles.length > 0 && <ul className="checks">{summary.failedFiles.map(file => <li key={`${file.name}-${file.reason}`} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{file.name}: {file.reason}</span></li>)}</ul>}{summary.instructionWarnings.length > 0 && <ul className="checks">{summary.instructionWarnings.map(warning => <li key={warning} className="check check-warn"><span className="check-dot"><Icon name="warning" size={13} /></span><span className="check-msg">{warning}</span></li>)}</ul>}<div className="btn-row"><button className="btn-primary" onClick={beginDownload}><Icon name="refresh" size={16} /> Run again</button><button className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</button><button className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</button></div></div>}
+          {stage === 'summary' && summary && <Surface className="panel summary-panel"><div className="surface-intro"><div><h2>{summary.cancelled ? 'Download cancelled' : 'Download complete'}</h2><p>{summary.cancelled ? 'Everything saved before the stop is kept in your chosen folder.' : 'Files and course instructions were saved in this read-only run.'}</p><p className="mono">Saved to {summary.downloadDir || config.downloadDir}{typeof summary.durationMs === 'number' ? ` · transfer took ${formatDuration(summary.durationMs)}` : ''}</p></div><span className={`state-badge ${summary.cancelled ? 'state-neutral' : 'state-good'}`}>{summary.cancelled ? 'Cancelled' : 'Finished'}</span></div><div className="summary-grid"><div><span>Files saved as</span><strong>{runLayout === 'flat' ? 'Flat' : 'Folders'}</strong></div>{typeof summary.alreadySaved === 'number' && summary.alreadySaved > 0 && <div><span>Already saved</span><strong>{summary.alreadySaved}</strong></div>}<div><span>Courses scanned</span><strong>{summary.coursesSelected}</strong></div><div><span>Files found</span><strong>{summary.filesDiscovered}</strong></div><div><span>Downloaded</span><strong className="text-good">{summary.filesDownloaded}</strong></div><div><span>Skipped</span><strong className="text-warn">{summary.filesSkipped}</strong></div>{typeof summary.filesRejected === 'number' && summary.filesRejected > 0 && <div><span>Rejected</span><strong className="text-warn">{summary.filesRejected}</strong></div>}<div><span>Failed</span><strong className="text-bad">{summary.filesFailed}</strong></div><div><span>Instruction courses</span><strong>{summary.instructionCoursesSelected}</strong></div><div><span>Instructions saved</span><strong className="text-good">{summary.instructionsDownloaded}</strong></div><div><span>Text discovered</span><strong>{summary.instructionsDiscovered}</strong></div></div>{summary.failedFiles.length > 0 && <ul className="checks">{summary.failedFiles.map(file => <li key={`${file.name}-${file.reason}`} className="check check-fail"><span className="check-dot"><Icon name="x" size={13} /></span><span className="check-msg">{file.name}: {file.reason}</span></li>)}</ul>}{summary.instructionWarnings.length > 0 && <ul className="checks">{summary.instructionWarnings.map(warning => <li key={warning} className="check check-warn"><span className="check-dot"><Icon name="warning" size={13} /></span><span className="check-msg">{warning}</span></li>)}</ul>}<div className="btn-row"><Action className="btn-primary" onClick={beginDownload}><Icon name="refresh" size={16} /> Run again</Action><Action className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={16} /> Open downloads</Action><Action className="btn-ghost" onClick={openLogs}><Icon name="terminal" size={16} /> Open logs</Action></div></Surface>}
         </section>}
+        </Scene>
       </main>
+      <WorkspaceFooter version={version} downloads={paths.downloads} logs={paths.logs} onDownloads={openDownloads} onLogs={openLogs} />
     </div>
   );
 }
@@ -803,31 +1346,46 @@ function CourseInstructionPicker({
   onToggle,
   onSelectAll,
   onClear,
+  expanded,
+  onToggleExpanded,
 }: {
   courses: Course[];
   selectedIds: Set<string>;
   onToggle: (courseId: string) => void;
   onSelectAll: () => void;
   onClear: () => void;
+  expanded: boolean;
+  onToggleExpanded: () => void;
 }) {
-  return <section className="instruction-picker" data-testid="instruction-picker">
+  return <section className={`instruction-picker ${expanded ? 'is-open' : 'is-collapsed'}`} data-testid="instruction-picker">
     <div className="instruction-picker-head">
-      <div><span className="instruction-eyebrow"><Icon name="book" size={14} /> Course-level text</span><h3>Include instructions and text</h3><p>Save every readable instruction, assignment, announcement, and text item for the included courses. Individual items are included automatically.</p></div>
-      <CountSummary items={[`${selectedIds.size} included`, `${courses.length} courses`]} />
+      <div>
+        <span className="instruction-eyebrow"><Icon name="book" size={14} /> Course-level text</span>
+        <h3>Include instructions and text</h3>
+        {expanded && <p>Save every readable instruction, assignment, announcement, and text item for the included courses. Individual items are included automatically.</p>}
+      </div>
+      <div className="instruction-picker-actions">
+        <Action type="button" className="btn-chip" data-testid="instruction-picker-toggle" aria-expanded={expanded} onClick={onToggleExpanded}>
+          <Icon name="chevron-down" size={15} className={expanded ? 'is-flipped' : ''} />
+          {expanded ? 'Done' : selectedIds.size > 0 ? `Text: ${selectedIds.size} course${selectedIds.size === 1 ? '' : 's'}` : 'Add course text'}
+        </Action>
+      </div>
     </div>
-    <div className="instruction-course-list">
-      {courses.map(course => {
-        const selected = selectedIds.has(course.id);
-        return <label key={course.id} className={`instruction-course-row ${selected ? 'is-selected' : ''}`} title={course.name}>
-          <input type="checkbox" data-testid={`instruction-course-${course.id}`} checked={selected} onChange={() => onToggle(course.id)} />
-          <span className="instruction-course-icon"><Icon name="book" size={16} /></span>
-          <span className="instruction-course-copy"><strong className="ellipsis">{course.name}</strong><small>All readable course content</small></span>
-          <span className={`instruction-course-state ${selected ? 'is-on' : ''}`}>{selected ? 'Included' : 'Skipped'}</span>
-        </label>;
-      })}
-      {courses.length === 0 && <div className="empty-inline">Select at least one course to include its instructions.</div>}
-    </div>
-    <div className="instruction-picker-footer"><span>{selectedIds.size > 0 ? `${selectedIds.size} course${selectedIds.size === 1 ? '' : 's'} will be scraped completely.` : 'No course instructions selected.'}</span><div className="btn-row btn-row-inline"><button className="btn-ghost btn-compact" onClick={onSelectAll} disabled={courses.length === 0}>Include all</button><button className="btn-ghost btn-compact" onClick={onClear} disabled={selectedIds.size === 0}>Clear</button></div></div>
+    {expanded && <>
+      <div className="instruction-course-list">
+        {courses.map(course => {
+          const selected = selectedIds.has(course.id);
+          return <label key={course.id} className={`instruction-course-row ${selected ? 'is-selected' : ''}`} title={course.name}>
+            <input type="checkbox" data-testid={`instruction-course-${course.id}`} checked={selected} onChange={() => onToggle(course.id)} />
+            <span className="instruction-course-icon"><Icon name="book" size={16} /></span>
+            <span className="instruction-course-copy"><strong className="ellipsis">{course.name}</strong><small>All readable course content</small></span>
+            <span className={`instruction-course-state ${selected ? 'is-on' : ''}`}>{selected ? 'Included' : 'Skipped'}</span>
+          </label>;
+        })}
+        {courses.length === 0 && <div className="empty-inline">Select at least one course to include its instructions.</div>}
+      </div>
+      <div className="instruction-picker-footer"><span>{selectedIds.size > 0 ? `${selectedIds.size} course${selectedIds.size === 1 ? '' : 's'} will be scraped completely.` : 'No course instructions selected.'}</span><div className="btn-row btn-row-inline"><Action className="btn-ghost btn-compact" onClick={onSelectAll} disabled={courses.length === 0}>Include all</Action><Action className="btn-ghost btn-compact" onClick={onClear} disabled={selectedIds.size === 0}>Clear</Action></div></div>
+    </>}
   </section>;
 }
 
@@ -903,7 +1461,7 @@ function BrowserModeSlider({ headless, onChange }: { headless: boolean; onChange
 
   return <div className="browser-mode-control">
     <div ref={sliderRef} className="mode-slider" data-mode={headless ? 'headless' : 'visible'} data-dragging={dragging ? 'true' : 'false'} role="slider" tabIndex={0} aria-labelledby="browser-mode-label" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(position)} aria-valuetext={headless ? 'Headless, default' : 'Visible browser'} aria-orientation="horizontal" onKeyDown={handleKeyDown} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={() => setDragging(false)}>
-      <span className="mode-slider-track" aria-hidden="true"><span className="mode-slider-active" style={activeLeft === undefined ? undefined : { left: `${activeLeft}px`, width: `${segmentWidth}px` }} /><span className="mode-slider-thumb" style={thumbLeft === undefined ? undefined : { left: `${thumbLeft}px` }}><Icon name={headless ? 'monitor' : 'eye'} size={14} /></span></span>
+      <span className="mode-slider-track" aria-hidden="true"><span className="mode-slider-active" style={activeLeft === undefined ? undefined : { transform: `translateX(${activeLeft - sliderInset}px)`, width: `${segmentWidth}px` }} /><span className="mode-slider-thumb" style={thumbLeft === undefined ? undefined : { left: `${thumbLeft}px` }}><Icon name={headless ? 'monitor' : 'eye'} size={14} /></span></span>
       <span className={`mode-option mode-option-headless ${headless ? 'is-active' : ''}`}><Icon name="monitor" size={14} /><span>Headless <small>(default)</small></span></span>
       <span className={`mode-option mode-option-visible ${headless ? '' : 'is-active'}`}><Icon name="eye" size={14} /><span>Visible</span></span>
     </div>
@@ -916,8 +1474,42 @@ function ProgressBar({ label, value, detail, subdetail, indeterminate = false, d
   return <div className="progress-block" data-testid={dataTestId}><div className="progress-caption"><strong>{label}</strong><span className="mono">{detail || `${percent.toFixed(0)}%`}</span></div><div className={`progress-track ${indeterminate ? 'is-indeterminate' : ''}`} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} {...(!indeterminate ? { 'aria-valuenow': percent } : {})}><span className="progress-fill" style={indeterminate ? undefined : { transform: `scaleX(${percent / 100})` }} /></div>{subdetail && <div className="progress-subdetail">{subdetail}</div>}</div>;
 }
 
-function CountSummary({ items }: { items: string[] }) { return <div className="count-summary">{items.map(item => <span key={item}>{item}</span>)}</div>; }
+/**
+ * Demo "already saved" state: the first files look saved in the folder
+ * structure, the next block looks saved flat, so both layouts are visible in
+ * the offline demo without a Blackboard session.
+ */
+function demoExistingState(files: DiscoveredFile[]): Record<string, ExistingFileState> {
+  const state: Record<string, ExistingFileState> = {};
+  files.forEach((file, index) => {
+    state[file.url] = { hierarchy: index < 12, flat: index >= 12 && index < 20, size: file.size };
+  });
+  return state;
+}
 
+/**
+ * Display label for a file's kind. The scan already knows most extensions;
+ * falling back to the name keeps the column useful when the metadata pass was
+ * skipped for an already-saved file.
+ */
+function fileKind(file: DiscoveredFile): string {
+  const explicit = (file.fileType || '').trim();
+  if (explicit) return explicit.toUpperCase();
+  const extension = file.name.includes('.') ? file.name.split('.').pop() || '' : '';
+  return extension && extension.length <= 5 ? extension.toUpperCase() : 'FILE';
+}
+
+function CountSummary({ items }: { items: string[] }) { return <div className="count-summary">{items.map(item => <span key={item}>{item}</span>)}</div>; }
 function Stepper({ current }: { current: number }) {
   return <ol className="stepper" aria-label="Download progress">{WIZARD_STEPS.map((label, index) => { const state = index < current ? 'done' : index === current ? 'active' : 'todo'; return <li key={label} className={`step step-${state}`} aria-current={state === 'active' ? 'step' : undefined}><span className="step-dot">{index < current ? <Icon name="check" size={14} /> : index + 1}</span><span className="step-label">{label}</span>{index < WIZARD_STEPS.length - 1 && <span className="step-line" />}</li>; })}</ol>;
+}
+
+
+function SortHead({ label, active, desc, onClick, className = '' }: { label: string; active: boolean; desc: boolean; onClick: () => void; className?: string }) {
+  return (
+    <button type="button" className={`th-sort ${className} ${active ? 'is-active' : ''}`} aria-sort={active ? (desc ? 'descending' : 'ascending') : 'none'} title={`Sort by ${label.toLowerCase()}`} onClick={onClick}>
+      {label}
+      <span className="th-arrow" aria-hidden="true">{active ? (desc ? '↓' : '↑') : ''}</span>
+    </button>
+  );
 }

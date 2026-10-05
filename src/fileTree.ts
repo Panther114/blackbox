@@ -27,10 +27,11 @@ export function loadFileTree(filePath: string): FileTree {
     if (fs.existsSync(filePath)) {
       const raw = fs.readFileSync(filePath, 'utf-8');
       const parsed = JSON.parse(raw) as FileTree;
-      if (parsed.version && parsed.courses) {
+      if (parsed.version === FILE_TREE_VERSION && parsed.courses) {
         log.debug(`Loaded file tree from ${filePath} (generated ${parsed.generatedAt})`);
         return parsed;
       }
+      log.debug(`Ignoring file tree at ${filePath} with unsupported schema version ${String(parsed.version)}`);
     }
   } catch (err: any) {
     log.warn(`Could not load file tree from ${filePath}: ${err.message}`);
@@ -53,6 +54,46 @@ export function saveFileTree(tree: FileTree, filePath: string): void {
   fs.writeFileSync(tmpPath, JSON.stringify(tree, null, 2), 'utf-8');
   fs.renameSync(tmpPath, filePath);
   log.debug(`File tree saved to ${filePath}`);
+}
+
+/**
+ * Coalesced saving for the download hot path.
+ *
+ * Downloading N files used to serialise N full-tree JSON writes (the cache can
+ * grow to megabytes), which dominated the tail of a large run. The writer below
+ * serialises the tree at most once per window and the caller flushes it when the
+ * batch ends; nothing is lost if the process dies mid-window, because the cache
+ * is metadata only and the disk is the source of truth.
+ */
+const SAVE_COALESCE_MS = 1500;
+let pendingSave: { tree: FileTree; filePath: string } | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Queue a tree save, replacing any pending one. Flush with flushFileTreeSave(). */
+export function scheduleFileTreeSave(tree: FileTree, filePath: string): void {
+  pendingSave = { tree, filePath };
+  if (pendingTimer) return;
+  pendingTimer = setTimeout(() => {
+    pendingTimer = null;
+    flushFileTreeSave();
+  }, SAVE_COALESCE_MS);
+  pendingTimer.unref?.();
+}
+
+/** Write any queued tree save immediately. Safe to call when nothing is queued. */
+export function flushFileTreeSave(): void {
+  if (pendingTimer) {
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+  const pending = pendingSave;
+  pendingSave = null;
+  if (!pending) return;
+  try {
+    saveFileTree(pending.tree, pending.filePath);
+  } catch (err: any) {
+    log.warn(`Could not save file tree to ${pending.filePath}: ${err.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -125,20 +166,33 @@ function createEmptyTree(): FileTree {
  * Only the first two directory levels are treated as course/section;
  * everything below that is collapsed into the folder path key.
  */
+/**
+ * Directory names that are Blackbox bookkeeping, not downloaded courses.
+ * Ingesting them as courses fabricates bogus tree entries (e.g. every
+ * agent-export markdown file appearing as a course).
+ */
+const NON_COURSE_DIRECTORIES = new Set(['agent-export', 'logs']);
+
+function isCourseDirectory(name: string): boolean {
+  return !name.startsWith('.') && !NON_COURSE_DIRECTORIES.has(name);
+}
+
 export function buildFileTreeFromDisk(downloadDir: string): FileTree {
   const tree = createEmptyTree();
 
   if (!fs.existsSync(downloadDir)) return tree;
 
-  const courseNames = readdirSafe(downloadDir).filter(name =>
-    fs.statSync(path.join(downloadDir, name)).isDirectory()
-  );
+  const courseNames = readdirSafe(downloadDir).filter(name => {
+    if (!isCourseDirectory(name)) return false;
+    return safeStatIsDirectory(path.join(downloadDir, name));
+  });
 
   for (const courseName of courseNames) {
     const coursePath = path.join(downloadDir, courseName);
-    const sectionNames = readdirSafe(coursePath).filter(name =>
-      fs.statSync(path.join(coursePath, name)).isDirectory()
-    );
+    const sectionNames = readdirSafe(coursePath).filter(name => {
+      if (name.startsWith('.')) return false;
+      return safeStatIsDirectory(path.join(coursePath, name));
+    });
 
     for (const sectionName of sectionNames) {
       const sectionPath = path.join(coursePath, sectionName);
@@ -161,8 +215,9 @@ function scanFolderRecursive(
 
   for (const entry of entries) {
     const fullPath = path.join(currentPath, entry);
-    const stat = fs.statSync(fullPath);
+    const stat = safeStat(fullPath);
 
+    if (stat === null) continue;
     if (stat.isDirectory()) {
       scanFolderRecursive(tree, courseName, sectionName, baseSectionPath, fullPath);
     } else if (stat.isFile() && !entry.startsWith('.')) {
@@ -176,6 +231,23 @@ function scanFolderRecursive(
       });
     }
   }
+}
+
+/**
+ * stat() that survives dangling symlinks, permission errors, and files that
+ * disappear mid-scan. A single unreadable entry must not abort the migration.
+ */
+function safeStat(fullPath: string): fs.Stats | null {
+  try {
+    return fs.statSync(fullPath);
+  } catch {
+    return null;
+  }
+}
+
+function safeStatIsDirectory(fullPath: string): boolean {
+  const stat = safeStat(fullPath);
+  return stat !== null && stat.isDirectory();
 }
 
 function readdirSafe(dir: string): string[] {

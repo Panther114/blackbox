@@ -133,6 +133,48 @@ describe('Blackboard login navigation errors', () => {
     expect(page.goto).toHaveBeenNthCalledWith(2, loginUrl, expect.objectContaining({ waitUntil: 'commit' }));
   });
 
+  it('dismisses the consent lightbox when it intercepts the login click', async () => {
+    const config = testConfig();
+    const interceptionError = new Error(
+      'page.click: Timeout 30000ms exceeded\n' +
+      '<p>Blackboard 将收集、使用和存储使用此应用程序及相关功能所必需的个人信息。</p> from ' +
+      '<div role="dialog" class="lb-wrapper lb-wrapper-absolute">…</div> subtree intercepts pointer events',
+    );
+    let loginClickAttempts = 0;
+    let consentClicks = 0;
+    const page = {
+      url: jest.fn().mockReturnValue(loginUrl),
+      evaluate: jest.fn().mockResolvedValue(undefined),
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue(undefined),
+      locator: jest.fn((selector: string) => ({
+        first: () => ({
+          isVisible: jest.fn().mockResolvedValue(selector === '#agree_button'),
+          click: jest.fn(async () => {
+            consentClicks += 1;
+          }),
+        }),
+      })),
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn(async () => {
+        loginClickAttempts += 1;
+        if (loginClickAttempts < 3) throw interceptionError;
+      }),
+      waitForLoadState: jest.fn().mockResolvedValue(undefined),
+    };
+    const context = {
+      clearCookies: jest.fn().mockResolvedValue(undefined),
+      pages: jest.fn().mockReturnValue([page]),
+    };
+    const auth = new BlackboardAuth(config);
+    attachFakeBrowser(auth, page, context);
+
+    await auth.login();
+
+    expect(loginClickAttempts).toBe(3);
+    expect(consentClicks).toBeGreaterThanOrEqual(1);
+  });
+
   it('archives only disposable Crashpad state before a full profile reset', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blackbox-crashpad-test-'));
     const profileDir = path.join(root, 'browser-profile');

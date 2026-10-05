@@ -29,6 +29,31 @@ export interface DownloadableFile {
   mimeType?: string;
   status: 'pending' | 'downloading' | 'completed' | 'failed';
   error?: string;
+  /** Course display name; kept as metadata when the flat layout drops the path segments. */
+  courseName?: string;
+  /** Section display name; kept as metadata when the flat layout drops the path segments. */
+  sectionName?: string;
+  /** Layout this file is being downloaded with. Defaults to 'hierarchy'. */
+  layout?: DownloadLayout;
+}
+
+/**
+ * Choose how downloaded files are laid out inside the download directory.
+ * `hierarchy` (default) keeps the Blackboard course / section / folder tree;
+ * `flat` writes every file directly into its course folder.
+ */
+export type DownloadLayout = 'hierarchy' | 'flat';
+
+/**
+ * Which layouts already hold a copy of a discovered file. The two layouts are
+ * tracked separately: a folder-structure download does not satisfy a flat run
+ * (and the other way round), because the copies sit in different folders.
+ */
+export interface ExistingFileState {
+  hierarchy: boolean;
+  flat: boolean;
+  /** Size of the saved copy, when the download database knows it (no HEAD needed). */
+  size?: number;
 }
 
 /**
@@ -78,6 +103,20 @@ export interface Config {
   browserProfileDir?: string;
   /** Prefer the installed Microsoft Edge browser before bundled Playwright Chromium. */
   useSystemEdge?: boolean;
+  /**
+   * Automation backend for headless runs. `chromium` (default) is the packaged
+   * Playwright browser; `obscura` drives the Rust Obscura engine over CDP and
+   * is intended for testing headless discovery/extraction.
+   */
+  browserBackend?: 'chromium' | 'obscura';
+  /** Path or name of the Obscura executable. Defaults to `obscura` on PATH. */
+  obscuraBinary?: string;
+  /** Enable Obscura's built-in stealth mode (default true). */
+  obscuraStealth?: boolean;
+  /** Optional HTTP/SOCKS5 proxy passed to Obscura. */
+  obscuraProxy?: string;
+  /** Port for the Obscura CDP endpoint (default 9223). */
+  obscuraPort?: number;
 }
 
 export type ContentItemKind = 'content' | 'assignment' | 'announcement';

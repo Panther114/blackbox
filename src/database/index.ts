@@ -1,179 +1,149 @@
-import Database from 'better-sqlite3';
-import path from 'path';
 import fs from 'fs';
+import path from 'path';
 import { DatabaseRecord } from '../types';
 import { log } from '../utils/logger';
 
+/** Delay that coalesces bursts of updates (one per downloaded file) into a single write. */
+const SAVE_DEBOUNCE_MS = 400;
+
+interface StoredRecord {
+  url: string;
+  path: string;
+  filename: string;
+  status: string;
+  size?: number;
+  downloadedAt?: string;
+  error?: string;
+}
+
+/**
+ * Download ledger kept as a small JSON file next to the configured database
+ * path. It replaces the former SQLite database: the ledger is a few thousand
+ * rows at most, so an in-memory map with atomic debounced writes is faster to
+ * start, needs no native module and keeps the same public API.
+ */
 export class DownloadDatabase {
-  private db: Database.Database;
+  private readonly file: string;
+  private readonly records = new Map<string, StoredRecord>();
+  private nextId = 1;
+  private ids = new Map<string, number>();
+  private timer: NodeJS.Timeout | null = null;
+  private dirty = false;
 
   constructor(dbPath: string) {
-    // Ensure database directory exists
-    const dbDir = path.dirname(dbPath);
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-    }
-
-    this.db = new Database(dbPath);
-    // WAL mode gives better concurrent-read performance (many parallel downloads)
-    this.db.pragma('journal_mode = WAL');
-    this.initTables();
-    log.info(`Database initialized at ${dbPath}`);
+    // `blackbox.db` becomes `blackbox.json`; an old SQLite file is left untouched.
+    this.file = dbPath.replace(/\.(db|sqlite3?)$/i, '') + '.json';
+    fs.mkdirSync(path.dirname(this.file), { recursive: true });
+    this.load();
+    log.info(`Download ledger ready at ${this.file}`);
   }
 
-  /**
-   * Initialize database tables
-   */
-  private initTables(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS downloads (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        url TEXT NOT NULL UNIQUE,
-        path TEXT NOT NULL,
-        filename TEXT NOT NULL,
-        status TEXT NOT NULL,
-        size INTEGER,
-        downloaded_at DATETIME,
-        error TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_url ON downloads(url);
-      CREATE INDEX IF NOT EXISTS idx_status ON downloads(status);
-    `);
-
-    // On startup, reset any lingering 'pending' records to 'failed' so they
-    // show up in the retry queue rather than inflating statistics.
-    this.markAllPendingAsFailed();
-  }
-
-  /**
-   * Reset all records with status='pending' to status='failed'.
-   * This runs once at startup to clean up records from previous interrupted runs.
-   */
-  private markAllPendingAsFailed(): void {
-    const stmt = this.db.prepare(
-      `UPDATE downloads SET status = 'failed', error = 'Interrupted (pending at startup)', updated_at = CURRENT_TIMESTAMP WHERE status = 'pending'`
-    );
-    const result = stmt.run();
-    if (result.changes > 0) {
-      log.info(`Reset ${result.changes} stale pending record(s) to failed`);
+  private load(): void {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8')) as { records?: StoredRecord[] };
+      let interrupted = 0;
+      for (const record of parsed.records ?? []) {
+        if (!record?.url) continue;
+        // Anything still pending belongs to a run that was interrupted.
+        if (record.status === 'pending') {
+          record.status = 'failed';
+          record.error = 'Interrupted (pending at startup)';
+          interrupted += 1;
+        }
+        this.records.set(record.url, record);
+        this.ids.set(record.url, this.nextId++);
+      }
+      if (interrupted > 0) {
+        log.info(`Reset ${interrupted} stale pending record(s) to failed`);
+        this.markDirty();
+      }
+    } catch {
+      // Missing or unreadable ledger: start empty.
     }
   }
 
-  /**
-   * Check if URL has been downloaded
-   */
+  private markDirty(): void {
+    this.dirty = true;
+    if (this.timer) return;
+    this.timer = setTimeout(() => this.flush(), SAVE_DEBOUNCE_MS);
+    this.timer.unref?.();
+  }
+
+  private flush(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    if (!this.dirty) return;
+    this.dirty = false;
+    const temp = `${this.file}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(temp, JSON.stringify({ version: 1, records: [...this.records.values()] }), 'utf8');
+      fs.renameSync(temp, this.file);
+    } catch (error) {
+      fs.rmSync(temp, { force: true });
+      log.warn(`Could not save the download ledger: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private toRecord(stored: StoredRecord): DatabaseRecord {
+    return {
+      id: this.ids.get(stored.url),
+      url: stored.url,
+      path: stored.path,
+      filename: stored.filename,
+      status: stored.status,
+      size: stored.size,
+      downloadedAt: stored.downloadedAt ? new Date(stored.downloadedAt) : undefined,
+      error: stored.error,
+    };
+  }
+
   isDownloaded(url: string): boolean {
-    const stmt = this.db.prepare('SELECT status FROM downloads WHERE url = ? AND status = ?');
-    const result = stmt.get(url, 'completed');
-    return !!result;
+    return this.records.get(url)?.status === 'completed';
   }
 
-  /**
-   * Add or update download record
-   */
   upsertDownload(record: DatabaseRecord): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO downloads (url, path, filename, status, size, downloaded_at, error)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(url) DO UPDATE SET
-        path = excluded.path,
-        filename = excluded.filename,
-        status = excluded.status,
-        size = excluded.size,
-        downloaded_at = excluded.downloaded_at,
-        error = excluded.error,
-        updated_at = CURRENT_TIMESTAMP
-    `);
-
-    stmt.run(
-      record.url,
-      record.path,
-      record.filename,
-      record.status,
-      record.size || null,
-      record.downloadedAt ? record.downloadedAt.toISOString() : null,
-      record.error || null
-    );
+    if (!this.ids.has(record.url)) this.ids.set(record.url, this.nextId++);
+    this.records.set(record.url, {
+      url: record.url,
+      path: record.path,
+      filename: record.filename,
+      status: record.status,
+      size: record.size || undefined,
+      downloadedAt: record.downloadedAt ? record.downloadedAt.toISOString() : undefined,
+      error: record.error || undefined,
+    });
+    this.markDirty();
   }
 
-  /**
-   * Get download record by URL
-   */
   getDownload(url: string): DatabaseRecord | null {
-    const stmt = this.db.prepare('SELECT * FROM downloads WHERE url = ?');
-    const row: any = stmt.get(url);
-
-    if (!row) return null;
-
-    return {
-      id: row.id,
-      url: row.url,
-      path: row.path,
-      filename: row.filename,
-      status: row.status,
-      size: row.size,
-      downloadedAt: row.downloaded_at ? new Date(row.downloaded_at) : undefined,
-      error: row.error,
-    };
+    const stored = this.records.get(url);
+    return stored ? this.toRecord(stored) : null;
   }
 
-  /**
-   * Get all downloads with specific status
-   */
   getDownloadsByStatus(status: string): DatabaseRecord[] {
-    const stmt = this.db.prepare('SELECT * FROM downloads WHERE status = ?');
-    const rows: any[] = stmt.all(status);
-
-    return rows.map(row => ({
-      id: row.id,
-      url: row.url,
-      path: row.path,
-      filename: row.filename,
-      status: row.status,
-      size: row.size,
-      downloadedAt: row.downloaded_at ? new Date(row.downloaded_at) : undefined,
-      error: row.error,
-    }));
+    return [...this.records.values()].filter(record => record.status === status).map(record => this.toRecord(record));
   }
 
-  /**
-   * Get download statistics
-   */
   getStats(): { total: number; completed: number; failed: number; pending: number } {
-    const stmt = this.db.prepare(`
-      SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
-      FROM downloads
-    `);
-
-    const result: any = stmt.get();
-    return {
-      total: result.total || 0,
-      completed: result.completed || 0,
-      failed: result.failed || 0,
-      pending: result.pending || 0,
-    };
+    const stats = { total: this.records.size, completed: 0, failed: 0, pending: 0 };
+    for (const record of this.records.values()) {
+      if (record.status === 'completed') stats.completed += 1;
+      else if (record.status === 'failed') stats.failed += 1;
+      else if (record.status === 'pending') stats.pending += 1;
+    }
+    return stats;
   }
 
-  /**
-   * Clear all records
-   */
   clear(): void {
-    this.db.exec('DELETE FROM downloads');
+    this.records.clear();
+    this.ids.clear();
+    this.markDirty();
+    this.flush();
     log.info('Database cleared');
   }
 
-  /**
-   * Close database connection
-   */
   close(): void {
-    this.db.close();
+    this.flush();
     log.info('Database connection closed');
   }
 }

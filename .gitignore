@@ -12,6 +12,9 @@ build/
 
 # Agent runtime state
 .opencode/
+.impeccable/build/
+.impeccable/review/
+/.impeccable/
 
 # Environment variables
 .env
@@ -50,6 +53,22 @@ coverage/
 tmp/
 temp/
 *.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Local course material
+/Grade_11.txt
+
+# Browser and tool output
+playwright-report/
+test-results/
+.cache/
 
 # OS files
 Thumbs.db
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/

@@ -32,9 +32,9 @@ export function writeAgentExport(input: WriteAgentExportInput): { manifestPath: 
       `id: ${item.id}`,
       `kind: ${item.kind}`,
       `course: ${JSON.stringify(item.courseName)}`,
-      `source: ${item.sourceUrl}`,
+      `source: ${JSON.stringify(item.sourceUrl)}`,
       item.dueAt ? `due_at: ${item.dueAt}` : '',
-      item.points ? `points: ${JSON.stringify(item.points)}` : '',
+      item.points !== undefined && item.points !== null && item.points !== '' ? `points: ${JSON.stringify(item.points)}` : '',
       '---',
       '',
       `# ${item.title}`,
@@ -62,7 +62,35 @@ export function writeAgentExport(input: WriteAgentExportInput): { manifestPath: 
   };
   fs.writeFileSync(path.join(temp, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 
-  fs.rmSync(root, { force: true, recursive: true });
-  fs.renameSync(temp, root);
+  // Swap the new export into place without ever leaving the root missing:
+  // the old export is moved to a backup first, and restored if the rename of
+  // the new export fails (common on Windows when a reader holds a handle).
+  const backup = `${root}.bak-${process.pid}-${Date.now()}`;
+  let oldExportExists = fs.existsSync(root);
+  if (oldExportExists) {
+    fs.renameSync(root, backup);
+  }
+  try {
+    fs.renameSync(temp, root);
+    oldExportExists = false;
+  } catch (error) {
+    if (fs.existsSync(backup)) {
+      fs.renameSync(backup, root);
+    }
+    try {
+      fs.rmSync(temp, { force: true, recursive: true });
+    } catch {
+      // The stranded temp export is cleaned up on the next successful run.
+    }
+    throw error;
+  } finally {
+    if (!oldExportExists && fs.existsSync(backup)) {
+      try {
+        fs.rmSync(backup, { force: true, recursive: true });
+      } catch {
+        // A lingering backup is preferable to losing the old export.
+      }
+    }
+  }
   return { manifestPath: path.join(root, 'manifest.json'), manifest };
 }
