@@ -21,6 +21,7 @@ sha2 = "0.10"
 url = "2"
 percent-encoding = "2"
 unicode-normalization = "0.1"
+scraper = "0.27.0"
 
 [dev-dependencies]
 tempfile = "3"
@@ -31,3 +32,6 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
