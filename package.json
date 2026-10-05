@@ -5,6 +5,9 @@
   "main": "dist/gui/main.js",
   "scripts": {
     "build": "node scripts/clean-dist.js && tsc -p tsconfig.gui.json",
+    "build:ui": "vite build --config vite.gui.config.ts && node scripts/copy-renderer-font-licenses.cjs",
+    "tauri": "tauri",
+    "tauri:build": "npm run build:ui && tauri build",
     "build:gui": "node scripts/clean-dist.js && tsc -p tsconfig.gui.json && npm run typecheck:renderer && vite build --config vite.gui.config.ts && node scripts/copy-renderer-font-licenses.cjs",
     "build:app": "npm run build:gui && electron-builder --win nsis --x64",
     "build:unpacked": "npm run build:gui && electron-builder --win dir --x64",
@@ -33,6 +36,8 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/cli": "^2.12.1",
     "@types/jest": "^29.5.10",
     "@types/node": "^20.10.0",
     "@types/react": "^18.3.26",

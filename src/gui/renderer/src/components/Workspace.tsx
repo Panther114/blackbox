@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { Icon, AppIcon } from './Icons';
+import { WindowControls } from './WindowControls';
 
 export type WorkspaceView = 'download' | 'automation' | 'agent' | 'settings';
 
@@ -40,7 +41,7 @@ export function WorkspaceNavigation({
 }) {
   const selectedIndex = destinations.findIndex(item => item.id === active);
   return (
-    <header className="workspace-header">
+    <header className="workspace-header" data-tauri-drag-region>
       <div className="workspace-brand">
         <AppIcon />
         <strong>Blackbox</strong>
@@ -66,6 +67,7 @@ export function WorkspaceNavigation({
           </Action>
         ))}
       </nav>
+      <WindowControls />
     </header>
   );
 }

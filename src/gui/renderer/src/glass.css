@@ -2496,3 +2496,37 @@ html:not([data-material='mica']) .app {
 .app:has(.settings-view) .dotwave {
   opacity: 0.66;
 }
+
+/* Frameless Tauri window: our own caption buttons, drawn over the title bar. */
+.window-controls {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  height: 44px;
+  -webkit-app-region: no-drag;
+}
+.window-controls button {
+  display: grid;
+  width: 46px;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  color: var(--ink-soft);
+  background: transparent;
+}
+.window-controls button:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+}
+.window-controls .is-close:hover {
+  color: #fff;
+  background: #c42b1c;
+}
+html[data-shell='tauri'] .workspace-status {
+  right: 156px;
+}
