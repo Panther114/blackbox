@@ -70,6 +70,9 @@ function resolvePackage(name, fromDir, appRoot) {
 }
 
 function checkDependencyClosure(appRoot) {
+  // macOS resolves temporary paths such as /var/... through /private/var/...;
+  // canonicalize the boundary before comparing it with resolved package paths.
+  appRoot = fs.realpathSync(appRoot);
   const errors = [];
   const rootManifestPath = path.join(appRoot, 'package.json');
   if (!exists(rootManifestPath)) return ['app.asar is missing package.json'];

@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { validatePackagedApp } = require('../scripts/check-packaged-dependencies.cjs');
+const { checkDependencyClosure, validatePackagedApp } = require('../scripts/check-packaged-dependencies.cjs');
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -80,6 +80,13 @@ describe('packaged dependency validator', () => {
   it('accepts Windows packaging without Chromium because Windows uses system Edge', () => {
     fs.rmSync(path.join(fixture.resourcesDir, 'playwright-browsers'), { recursive: true, force: true });
     expect(validatePackagedApp({ ...fixture, platformName: 'win32' })).toEqual([]);
+  });
+
+  it('resolves dependencies when the extracted app root is reached through a path alias', () => {
+    const aliasedAppRoot = path.join(fixture.root, 'app-alias');
+    fs.symlinkSync(fixture.appRoot, aliasedAppRoot, process.platform === 'win32' ? 'junction' : 'dir');
+
+    expect(checkDependencyClosure(aliasedAppRoot)).toEqual([]);
   });
 
   it('reports missing transitive packages and packaged resources', () => {
