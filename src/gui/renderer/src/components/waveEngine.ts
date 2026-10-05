@@ -13,8 +13,15 @@ const TIERS = [
   { cols: 76, rows: 44 },
 ];
 const MAX_RIPPLES = 4;
+/** One clock for every engine instance, so the wave carries on where it left off after being released. */
+const EPOCH = performance.now();
 /** Review hook: a hidden capture window is never focused, so allow measuring the focused path. */
-const FORCE_FOCUS = new URLSearchParams(window.location.search).has('forcefocus');
+const QUERY = new URLSearchParams(window.location.search);
+const FORCE_FOCUS = QUERY.has('forcefocus') || QUERY.has('bench');
+/** Measurement hook: record the time between drawn frames in `window.__wave`. */
+const BENCH = QUERY.has('bench');
+/** The points are soft and sparse, so the canvas can be drawn below device resolution and upscaled by the compositor. */
+const RENDER_SCALE = Number(QUERY.get('scale')) || 1.5;
 const COBALT: [number, number, number] = [0.357, 0.549, 1.0];
 const CYAN: [number, number, number] = [0.42, 0.84, 1.0];
 
@@ -71,7 +78,10 @@ void main() {
   float far = 1.0 - smoothstep(0.62, 1.0, a_g.y);
   float near = smoothstep(0.0, 0.07, a_g.y);
   float side = 1.0 - smoothstep(0.72, 1.0, abs(a_g.x));
-  v_a = far * near * side * (0.5 + 0.5 * clamp(h * 0.7 + 0.5, 0.0, 1.0));
+  // Fade towards the top of the window here instead of with a CSS mask, which would cost an extra full-window pass every frame.
+  float fromTop = 0.5 - gl_Position.y * 0.5;
+  float top = clamp((fromTop - 0.06) / 0.40, 0.0, 1.0);
+  v_a = far * near * side * top * (0.5 + 0.5 * clamp(h * 0.7 + 0.5, 0.0, 1.0));
   v_c = mix(u_c0, u_c1, clamp(h * 0.6 + 0.5, 0.0, 1.0));
 }`;
 
@@ -94,6 +104,8 @@ interface Ripple {
 
 export interface DotWave {
   setMode(mode: DotWaveMode): void;
+  /** The animation only runs while the window is in use; otherwise it holds its last frame. */
+  setActive(active: boolean): void;
   ripple(clientX: number, clientY: number): void;
   dispose(): void;
 }
@@ -132,23 +144,25 @@ function project(x: number, z: number, t: number, tilt: [number, number], w: num
 
 export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMode): DotWave {
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false, powerPreference: 'low-power' }) as WebGLRenderingContext | null;
+  const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' }) as WebGLRenderingContext | null;
 
   let mode: DotWaveMode = initialMode;
+  let active = FORCE_FOCUS || document.hasFocus();
   let raf = 0;
   let tier = 0;
   let width = 1;
   let height = 1;
-  let dpr = 1;
-  let lastDraw = 0;
-  let frames = 0;
+  let last = 0;
   let slowFrames = 0;
   let tilt: [number, number] = [0, 0];
   let tiltTarget: [number, number] = [0, 0];
+  let tiltSent: [number, number] = [NaN, NaN];
   const ripples: Ripple[] = [];
-  const start = performance.now();
-  const clock = () => (performance.now() - start) / 1000;
+  const rippleData = new Float32Array(MAX_RIPPLES * 4);
+  const clock = () => (performance.now() - EPOCH) / 1000;
   const STATIC_TIME = 2.4;
+  const bench: number[] = [];
+  if (BENCH) (window as unknown as { __wave: unknown }).__wave = { dt: bench, get active() { return active; } };
 
   // ---- WebGL path -----------------------------------------------------------
   let program: WebGLProgram | null = null;
@@ -174,6 +188,7 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
     if (!buffer) buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.uniform1f(loc.u_pt, 1.0 + (TIERS[tier].cols < 100 ? 0.45 : 0));
   }
 
   if (gl) {
@@ -190,10 +205,15 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
         for (const name of ['u_t', 'u_res', 'u_tilt', 'u_amp', 'u_pt', 'u_rip', 'u_c0', 'u_c1']) loc[name] = gl.getUniformLocation(program, name);
         gl.uniform3f(loc.u_c0, ...COBALT);
         gl.uniform3f(loc.u_c1, ...CYAN);
+        gl.uniform1f(loc.u_amp, 1.55);
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         gl.clearColor(0, 0, 0, 0);
         buildGrid();
+        // The grid never changes between frames: bind it once.
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.enableVertexAttribArray(aGrid);
+        gl.vertexAttribPointer(aGrid, 2, gl.FLOAT, false, 0, 0);
       } else program = null;
     } else program = null;
   }
@@ -203,30 +223,36 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
   const ctx2d = useGl ? null : canvas.getContext('2d');
 
   function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-    width = Math.max(1, Math.floor(canvas.clientWidth * dpr));
-    height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+    const scale = Math.min(window.devicePixelRatio || 1, RENDER_SCALE);
+    width = Math.max(1, Math.floor(canvas.clientWidth * scale));
+    height = Math.max(1, Math.floor(canvas.clientHeight * scale));
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
     }
-    if (gl && useGl) gl.viewport(0, 0, width, height);
+    if (gl && useGl) {
+      gl.viewport(0, 0, width, height);
+      gl.uniform2f(loc.u_res, width, height);
+    }
   }
 
   function draw(time: number) {
     if (useGl && gl) {
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.uniform1f(loc.u_t, time);
-      gl.uniform2f(loc.u_res, width, height);
-      gl.uniform2f(loc.u_tilt, tilt[0], tilt[1]);
-      gl.uniform1f(loc.u_amp, 1.55);
-      gl.uniform1f(loc.u_pt, 1.0 + (TIERS[tier].cols < 100 ? 0.45 : 0));
-      const flat = new Float32Array(MAX_RIPPLES * 4);
-      ripples.forEach((rp, i) => flat.set([rp.x, rp.z, rp.start, rp.strength], i * 4));
-      gl.uniform4fv(loc.u_rip, flat);
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.enableVertexAttribArray(aGrid);
-      gl.vertexAttribPointer(aGrid, 2, gl.FLOAT, false, 0, 0);
+      if (tilt[0] !== tiltSent[0] || tilt[1] !== tiltSent[1]) {
+        gl.uniform2f(loc.u_tilt, tilt[0], tilt[1]);
+        tiltSent = [tilt[0], tilt[1]];
+      }
+      for (let i = 0; i < ripples.length; i++) {
+        const rp = ripples[i];
+        rippleData[i * 4] = rp.x;
+        rippleData[i * 4 + 1] = rp.z;
+        rippleData[i * 4 + 2] = rp.start;
+        rippleData[i * 4 + 3] = rp.strength;
+      }
+      for (let i = ripples.length * 4; i < rippleData.length; i++) rippleData[i] = 0;
+      gl.uniform4fv(loc.u_rip, rippleData);
       gl.drawArrays(gl.POINTS, 0, count);
     } else if (ctx2d) {
       ctx2d.clearRect(0, 0, width, height);
@@ -251,29 +277,30 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
     }
   }
 
+  const running = () => mode === 'on' && active && !reduceMotion.matches && !document.hidden;
+
+  /** One draw per display frame (the browser's own vsync cadence, 60 fps on a 60 Hz screen). */
   function frame(now: number) {
     raf = 0;
-    if (mode !== 'on' || reduceMotion.matches || document.hidden) return;
-    const focused = document.hasFocus() || FORCE_FOCUS;
-    const interval = 1000 / (focused ? (useGl ? 30 : 20) : 10);
-    if (now - lastDraw >= interval - 1) {
-      const dt = now - lastDraw;
-      lastDraw = now;
-      tilt = [tilt[0] + (tiltTarget[0] - tilt[0]) * 0.06, tilt[1] + (tiltTarget[1] - tilt[1]) * 0.06];
-      const time = clock();
-      for (let i = ripples.length - 1; i >= 0; i--) if (time - ripples[i].start > 4.5) ripples.splice(i, 1);
-      draw(time);
-      // Adaptive quality: step down a tier when frames keep running long.
-      if (useGl && focused && ++frames > 40) {
-        if (dt > interval * 1.7) slowFrames++;
-        if (slowFrames > 24 && tier < TIERS.length - 1) {
-          tier++;
-          slowFrames = 0;
-          frames = 0;
-          buildGrid();
-        }
-      }
+    if (!running()) return;
+    const dt = last ? now - last : 16.7;
+    last = now;
+    tilt = [tilt[0] + (tiltTarget[0] - tilt[0]) * 0.1, tilt[1] + (tiltTarget[1] - tilt[1]) * 0.1];
+    const time = clock();
+    for (let i = ripples.length - 1; i >= 0; i--) if (time - ripples[i].start > 4.5) ripples.splice(i, 1);
+    draw(time);
+    if (BENCH) {
+      bench.push(Math.round(dt * 10) / 10);
+      if (bench.length > 1200) bench.shift();
     }
+    // Adaptive quality: only a sustained miss (frames over ~30 ms) steps the grid down a tier.
+    if (useGl && dt > 30 && dt < 250) {
+      if (++slowFrames > 45 && tier < TIERS.length - 1) {
+        tier++;
+        slowFrames = 0;
+        buildGrid();
+      }
+    } else if (slowFrames > 0) slowFrames--;
     raf = requestAnimationFrame(frame);
   }
 
@@ -283,17 +310,18 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
     canvas.style.display = mode === 'off' ? 'none' : 'block';
     if (mode === 'off') return;
     resize();
-    if (mode === 'on' && !reduceMotion.matches && !document.hidden) {
-      lastDraw = 0;
+    if (running()) {
+      last = 0;
       raf = requestAnimationFrame(frame);
-    } else {
+    } else if (mode === 'reduced' || reduceMotion.matches) {
       draw(STATIC_TIME);
     }
+    // Paused for focus/visibility: the canvas keeps its last frame, so nothing flashes.
   }
 
   const onResize = () => {
     resize();
-    if (mode === 'reduced' || reduceMotion.matches) draw(STATIC_TIME);
+    if (!running() && mode !== 'off') draw(mode === 'on' ? clock() : STATIC_TIME);
   };
   const onVisibility = () => schedule();
   const onMove = (event: PointerEvent) => {
@@ -304,8 +332,14 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
       mode = next;
       schedule();
     },
+    setActive(next) {
+      const value = next || FORCE_FOCUS;
+      if (value === active) return;
+      active = value;
+      schedule();
+    },
     ripple(clientX, clientY) {
-      if (mode !== 'on' || reduceMotion.matches) return;
+      if (!running()) return;
       const wx = (clientX / window.innerWidth) * 2 - 1;
       const wy = clientY / window.innerHeight;
       ripples.push({ x: wx * 8, z: 2 + (1 - wy) * 9, start: clock(), strength: 0.9 });
@@ -313,6 +347,10 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
     },
     dispose() {
       cancelAnimationFrame(raf);
+      if (gl) {
+        gl.getExtension('WEBGL_lose_context')?.loseContext();
+        canvas.width = canvas.height = 1;
+      }
       window.removeEventListener('resize', onResize);
       window.removeEventListener('pointermove', onMove);
       document.removeEventListener('visibilitychange', onVisibility);

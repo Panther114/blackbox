@@ -327,7 +327,6 @@ export function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [downloadState, setDownloadState] = useState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes: 0, unknownCount: 0, speed: 0, currentFile: '' });
   const [perUrlDownloaded, setPerUrlDownloaded] = useState<Map<string, number>>(new Map());
-  const [speedWindow, setSpeedWindow] = useState({ lastTs: Date.now(), bytes: 0 });
   const [selectedRunFileCount, setSelectedRunFileCount] = useState(0);
   /** Layout actually used by the current/last run, for the transfer and summary screens. */
   const [runLayout, setRunLayout] = useState<'hierarchy' | 'flat'>('hierarchy');
@@ -470,19 +469,6 @@ export function App() {
     });
     return () => unsub();
   }, [selectedCourseIds.size]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now();
-      setSpeedWindow(previous => {
-        const elapsed = (now - previous.lastTs) / 1000;
-        if (elapsed < 1) return previous;
-        setDownloadState(current => ({ ...current, speed: previous.bytes / elapsed }));
-        return { lastTs: now, bytes: 0 };
-      });
-    }, 500);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => { if (activeView !== 'settings' || settingsSection !== 'credentials') setShowPassword(false); }, [activeView, settingsSection]);
 
@@ -830,7 +816,7 @@ export function App() {
       const runInstructionCourses = [...selectedInstructionCourses];
       const runLayout: 'hierarchy' | 'flat' = keepHierarchy ? 'hierarchy' : 'flat';
       setRunLayout(runLayout);
-      const totalKnownBytes = Array.from(selectedKnownByUrl.values()).reduce((total, size) => total + size, 0); selectedRunUrlSetRef.current = new Set(runSelectedFiles.map(file => file.url)); selectedRunKnownByUrlRef.current = selectedKnownByUrl; setTransfer(null); setSelectedRunFileCount(runSelectedFiles.length); setSelectedRunInstructionCourseCount(runInstructionCourses.length); setPerUrlDownloaded(new Map()); setSpeedWindow({ lastTs: Date.now(), bytes: 0 }); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: runSelectedFiles.length - selectedKnownByUrl.size, speed: 0, currentFile: '' }); setInstructionProgress(runInstructionCourses.length > 0 ? { phase: 'discovery', completed: 0, total: runInstructionCourses.length, itemsFound: 0 } : null); setStatus(''); setStage('download');
+      const totalKnownBytes = Array.from(selectedKnownByUrl.values()).reduce((total, size) => total + size, 0); selectedRunUrlSetRef.current = new Set(runSelectedFiles.map(file => file.url)); selectedRunKnownByUrlRef.current = selectedKnownByUrl; setTransfer(null); setSelectedRunFileCount(runSelectedFiles.length); setSelectedRunInstructionCourseCount(runInstructionCourses.length); setPerUrlDownloaded(new Map()); setDownloadState({ completed: 0, failed: 0, skipped: 0, downloadedBytes: 0, totalKnownBytes, unknownCount: runSelectedFiles.length - selectedKnownByUrl.size, speed: 0, currentFile: '' }); setInstructionProgress(runInstructionCourses.length > 0 ? { phase: 'discovery', completed: 0, total: runInstructionCourses.length, itemsFound: 0 } : null); setStatus(''); setStage('download');
       try {
         const result = (await window.blackboxGui.downloadFiles(runSelectedFiles, runInstructionCourses, runLayout)) as Summary; setSummary(result); setStage('summary');
         if (result.cancelled) setStatus('Download cancelled. Files and text already saved were kept.');

@@ -139,15 +139,24 @@ pub fn run() {
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
             let _ = window.set_theme(Some(Theme::Dark));
+            // The frameless window has no title bar to show an icon, so give the taskbar and Alt+Tab one explicitly.
+            if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png")) {
+                let _ = window.set_icon(icon);
+            }
             // Mica needs Windows 11 22H2+; older builds report an error and keep the flat dark ground.
             let mica = window.set_effects(EffectsBuilder::new().effect(Effect::Mica).build()).is_ok();
             app.manage(Shell { material: if mica { "mica" } else { "none" } });
             let core = build_core(app.handle());
             schedule_update_checks(core.clone());
-            app.manage(core);
-            if std::env::var("BLACKBOX_HIDDEN").is_err() {
+            if std::env::var("BLACKBOX_BENCH").is_ok() {
+                // Measurement mode: a real, composited window parked far off every monitor and never focused.
+                let _ = window.set_focusable(false);
+                let _ = window.set_position(tauri::PhysicalPosition::new(-32000, -32000));
+                let _ = window.show();
+            } else if std::env::var("BLACKBOX_HIDDEN").is_err() {
                 let _ = window.show();
             }
+            app.manage(core);
             Ok(())
         })
         .run(tauri::generate_context!())

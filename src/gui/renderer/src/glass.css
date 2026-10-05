@@ -2473,8 +2473,12 @@ html:not([data-material='mica']) .app {
   height: 100%;
   pointer-events: none;
   opacity: 0.9;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 6%, #000 46%);
-  mask-image: linear-gradient(to bottom, transparent 6%, #000 46%);
+  animation: wave-in 0.5s ease-out;
+}
+@keyframes wave-in {
+  from {
+    opacity: 0;
+  }
 }
 
 /* Data surfaces stay legible over the wave; the entry screen stays glassy. */

@@ -47,3 +47,16 @@ Example shape (Chinese build):
 - Folder metadata and folder-opening actions must work before credentials are
   saved; authentication validation belongs to login and download actions.
 - Do not modify `src/automation/**` unless the task is about Automation.
+
+## Tauri build (src-tauri)
+
+- The release app is the Tauri 2 / Rust build; `npm run tauri:build` produces the NSIS installer.
+  `cargo test --lib` (in `src-tauri`) must pass alongside `npm test`.
+- Performance work is measured, not guessed: `BLACKBOX_BENCH=1` opens the real window parked off-screen
+  (unfocused, never visible); load `index.html?bench=1&scale=<n>` and read `window.__wave.dt` (ms between drawn
+  frames) over the WebView2 DevTools port (`BLACKBOX_CDP_PORT`). Target: 60 fps, p95 under 20 ms.
+- The dot wave pauses when the window loses focus and frees its canvas after 20 s (`?idle=<s>` overrides);
+  focus comes from the native window events, not `document.hasFocus()`.
+- Never install from inside the Claude app's sandbox: file-system virtualisation redirects the install and
+  breaks shortcut icons. Run installers through a one-shot scheduled task or by hand.
+

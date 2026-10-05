@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.0] - 2026-10-05
 
 ### Changed
+- The Windows app is now a Tauri/Rust build (installer about 2.5 MB). Batch Automation is not part of this build yet.
+- The background dot wave runs at a steady 60 fps, pauses when the window is not in focus, and frees its graphics memory after 20 seconds in the background.
+- The wave's top fade is drawn by the wave itself instead of a full-window CSS mask, which saves a rendering pass every frame.
+- The speed readout no longer flickers to zero once a second during a download.
+- The window and taskbar now show the app icon.
 - New dark interface with the native Windows 11 Mica material, a thin title bar with tabs and status, and a single typeface. Windows 10 gets a solid dark surface.
 - Denser layouts: the file and course lists get roughly twice the rows (about ten files at the 980x680 minimum window); the page title is now screen-reader only and the options sit on one row.
 - A slow, GPU-drawn fake-3D dot wave sits behind the interface (cursor parallax and click ripples). It is dimmed under data, pauses when the window is hidden, stays still under reduced motion, and can be set to On / Still / Off in Settings. Cost: about 1% of one CPU core and ~80 MB.
