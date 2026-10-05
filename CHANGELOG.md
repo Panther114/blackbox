@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-30
+
+### Fixed
+- Fixed the Windows startup error caused by missing packaged logging dependencies. Builds now verify required application dependencies before creating the installer.
+- New installations can load folder information and open their downloads and logs before credentials are saved.
+- Fixed navigation underline alignment and glass flicker when switching screens or Settings sections.
+
+### Changed
+- Redesigned every desktop screen with centered navigation, frosted glass surfaces, a bundled mountain-and-lake background, and clearer typography.
+- Added smooth navigation, screen, control, and dialog transitions with reduced-motion support.
+- Unified hover and press feedback, replaced interface icons with Lucide, and kept download cleanup in Downloads.
+
+## [1.1.2] - 2026-09-23
+
+### Fixed
+- Course selection now works per course: Blackboard's "My Courses" links (`.../execute/launcher?type=Course&id=_7247_1&url=`) carry no `course_id`, so every course ended up with the same empty id and ticking one checkbox selected the whole list.
+- Course ids are now unique per course, so the course picker, the "include instructions" picker and the shared automation course list each track courses separately; blocked-course entries saved by older versions are migrated to the same ids, which makes existing blocks apply again.
+- Added a "Cancel download" button to the download screen: it aborts in-flight transfers, drops everything still queued and keeps the files already saved; the run then reports as cancelled instead of failed.
+
+## [1.1.1] - 2026-09-06
+
+### Fixed
+- Automation logins were rejected with "incorrect username or password": G-numbers are case-sensitive on Blackboard and were lowercased before login; they are now kept in their canonical uppercase form (e.g. G2015010014).
+- Automation sessions are now fully isolated from the normal downloader: each session builds an explicit config (own database, file-tree cache and browser profile) with no environment inheritance, so normal course filters, blocked courses and download history can never leak in.
+- Every automation run now wipes the previous downloads and logs first, so each download starts from a fresh state; a Clear downloads button does the same on demand.
+- Courses are only treated as covered after they were actually downloaded: claims are confirmed per course and released on failure or cancel, so failed courses can be retried by other sessions instead of showing up as already covered.
+- Automation downloads course-by-course (discover, metadata, download, instructions per course) with the same metadata step as the normal downloader, and records per-file outcomes so failures are visible in the debug log.
+- Automation runs can now be cancelled mid-run; cancelling keeps everything already downloaded.
+- Greatly expanded automation debug logging (session config, login, course lists, per-course discovery/metadata/download/instruction counts and every failure reason).
+
 ## [1.1.0] - 2026-09-05
 
 ### Added

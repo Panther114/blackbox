@@ -2,6 +2,8 @@
 
 Blackbox is a desktop downloader for BlackboardChina course materials. It saves selected supported documents locally and does not submit coursework or modify Blackboard.
 
+In the desktop app, use the centered top navigation for Downloads, Automation, Agent Skills, and Settings. Settings sections are horizontal tabs; long lists scroll inside the workspace. Fonts and the glass background are bundled and work offline.
+
 ## First run
 
 For the simplest setup, download the installer for your platform from [GitHub Releases](https://github.com/Panther114/blackbox/releases).
@@ -25,6 +27,15 @@ If you run from a source checkout, install Node.js **22.x or 24.x**, then use `s
 
 By default: `Downloads/Blackbox` inside your home folder.
 You can change this in setup.
+
+## Folder layout
+
+The file screen offers two layouts before you press Download:
+
+- **Course folders** (default) — keeps the course / section / folder structure Blackboard uses.
+- **Flat files** — saves every file directly in its course folder.
+
+Both layouts can be used for the same course: a folder-structure download and a flat download live side by side and never overwrite each other. Files the selected layout already holds are marked *Saved* and left out of the download, so repeating a download does not create duplicates. Course text always keeps its own `Instructions` folder.
 
 ## Run again later
 
