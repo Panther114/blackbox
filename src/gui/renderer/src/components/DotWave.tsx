@@ -30,7 +30,7 @@ export function saveDotWaveMode(mode: DotWaveMode): void {
 
 /** Whether the window is being used. The page's own focus flag is unreliable in a frameless web view, so the native window's focus events lead there. */
 function useWindowFocus(): boolean {
-  const [focused, setFocused] = useState(() => document.hasFocus());
+  const [focused, setFocused] = useState(true);
   useEffect(() => {
     let disposed = false;
     const stops: Array<() => void> = [];

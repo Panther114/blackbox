@@ -26,8 +26,8 @@ type Tracker = Arc<Mutex<TransferTracker>>;
 
 pub type Emit = Arc<dyn Fn(&str, Value) + Send + Sync>;
 
-const STALL_TIMEOUT: Duration = Duration::from_secs(30);
-const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
+const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(120);
 const MAX_METADATA_CONCURRENCY: usize = 12;
 

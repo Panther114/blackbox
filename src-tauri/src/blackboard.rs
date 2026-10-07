@@ -13,6 +13,9 @@ use url::Url;
 use crate::parse::parse_courses;
 
 pub const BASE_URL: &str = "https://shs.blackboardchina.cn";
+/// How long to keep asking for the course list after signing in, and how often.
+pub const COURSE_WAIT: Duration = Duration::from_secs(60);
+const COURSE_POLL: Duration = Duration::from_secs(3);
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +82,7 @@ impl BbClient {
         let http = reqwest::Client::builder()
             .cookie_provider(jar.clone())
             .user_agent(USER_AGENT)
-            .connect_timeout(Duration::from_secs(15))
+            .connect_timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .map_err(|e| e.to_string())?;
@@ -105,11 +108,70 @@ impl BbClient {
     }
 
     pub async fn get_html(&self, url: &str) -> Result<String, String> {
-        let response = self.http.get(url).timeout(Duration::from_secs(30)).send().await.map_err(describe)?;
+        let response = self.http.get(url).timeout(Duration::from_secs(60)).send().await.map_err(describe)?;
         if !response.status().is_success() {
             return Err(format!("HTTP {} for {url}", response.status().as_u16()));
         }
         response.text().await.map_err(describe)
+    }
+
+    /// The portal page once it lists courses. Blackboard can be slow to show them, so the portal is polled until `limit` runs out.
+    pub async fn wait_for_courses(&self, limit: Duration) -> Option<String> {
+        let started = std::time::Instant::now();
+        let url = format!("{}/", self.base_url);
+        loop {
+            if let Ok(portal) = self.get_html(&url).await {
+                if !parse_courses(&portal, &self.base_url).is_empty() {
+                    return Some(portal);
+                }
+                // The course list is a module the page fills in with a script; ask for it the way the script does.
+                for module in ajax_modules(&portal) {
+                    if let Some(contents) = self.load_module(&module).await {
+                        let combined = format!("{portal}
+{contents}");
+                        if !parse_courses(&combined, &self.base_url).is_empty() {
+                            return Some(combined);
+                        }
+                    }
+                }
+            }
+            if started.elapsed() + COURSE_POLL >= limit {
+                return None;
+            }
+            tokio::time::sleep(COURSE_POLL).await;
+        }
+    }
+
+    /// The HTML of one lazily loaded portal module, or None when the request fails.
+    async fn load_module(&self, parameters: &str) -> Option<String> {
+        let response = self
+            .http
+            .post(format!("{}/webapps/portal/execute/tabs/tabAction", self.base_url))
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(parameters.to_string())
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let xml = response.text().await.ok()?;
+        Some(module_contents(&xml))
+    }
+
+    /// A credential-free summary of what the portal returns right now (status, final path, size).
+    pub async fn probe(&self) -> String {
+        match self.http.get(format!("{}/", self.base_url)).timeout(Duration::from_secs(30)).send().await {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                let path = response.url().path().to_string();
+                let html = response.text().await.unwrap_or_default();
+                format!("portal status={status} path={path} bytes={} courseListing={} modules={}", html.len(), html.contains("courseListing"), ajax_modules(&html).len())
+            }
+            Err(error) => format!("portal request failed: {error}"),
+        }
     }
 
     fn login_url(&self) -> String {
@@ -118,7 +180,7 @@ impl BbClient {
 
     pub async fn login(&self, username: &str, password: &str) -> LoginOutcome {
         let login_url = self.login_url();
-        let page = match self.http.get(&login_url).timeout(Duration::from_secs(20)).send().await {
+        let page = match self.http.get(&login_url).timeout(Duration::from_secs(45)).send().await {
             Ok(response) => response,
             Err(error) => return LoginOutcome::NeedsBrowser(describe(error)),
         };
@@ -139,7 +201,7 @@ impl BbClient {
         set_field(&mut fields, "encoded_pw", &base64::engine::general_purpose::STANDARD.encode(password), false);
         set_field(&mut fields, "encoded_pw_unicode", ".", false);
 
-        let response = match self.http.post(action).form(&fields).timeout(Duration::from_secs(30)).send().await {
+        let response = match self.http.post(action).form(&fields).timeout(Duration::from_secs(60)).send().await {
             Ok(response) => response,
             Err(error) => return LoginOutcome::NeedsBrowser(describe(error)),
         };
@@ -151,11 +213,9 @@ impl BbClient {
         if !parse_courses(&result, &self.base_url).is_empty() {
             return LoginOutcome::LoggedIn(result);
         }
-        // The portal may need one more request to render the course list.
-        if let Ok(portal) = self.get_html(&format!("{}/", self.base_url)).await {
-            if !parse_courses(&portal, &self.base_url).is_empty() {
-                return LoginOutcome::LoggedIn(portal);
-            }
+        // The course list can take a while to appear after signing in.
+        if let Some(portal) = self.wait_for_courses(COURSE_WAIT).await {
+            return LoginOutcome::LoggedIn(portal);
         }
         if login_form(&result, &result_url).is_some() {
             LoginOutcome::Rejected
@@ -163,6 +223,25 @@ impl BbClient {
             LoginOutcome::NeedsBrowser("Blackboard did not show the course list after signing in.".into())
         }
     }
+}
+
+/// Form bodies for each lazily loaded module in a portal page (`action=refreshAjaxModule&modId=...`).
+fn ajax_modules(html: &str) -> Vec<String> {
+    static MODULE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let pattern = MODULE.get_or_init(|| regex::Regex::new(r"refreshAjaxModule.{1,6}?modId.{1,6}?(_\d+_\d+).{1,6}?tabId.{1,6}?(_\d+_\d+).{1,6}?tab_tab_group_id.{1,6}?(_\d+_\d+)").unwrap());
+    let mut bodies: Vec<String> = pattern
+        .captures_iter(html)
+        .map(|c| format!("action=refreshAjaxModule&modId={}&tabId={}&tab_tab_group_id={}", &c[1], &c[2], &c[3]))
+        .collect();
+    bodies.dedup();
+    bodies
+}
+
+/// The HTML inside a module response (`<contents><![CDATA[...]]></contents>`).
+fn module_contents(xml: &str) -> String {
+    let inner = xml.split("<contents>").nth(1).and_then(|rest| rest.rsplit_once("</contents>")).map(|(body, _)| body).unwrap_or(xml);
+    let inner = inner.trim();
+    inner.strip_prefix("<![CDATA[").and_then(|body| body.strip_suffix("]]>")).unwrap_or(inner).to_string()
 }
 
 /// A short, user-readable reason for a failed request.
@@ -269,6 +348,14 @@ mod tests {
         let server = mock::start("G123", "right");
         let client = BbClient::new(&server.base).unwrap();
         assert_eq!(client.login("G123", "wrong").await, LoginOutcome::Rejected);
+    }
+
+    #[test]
+    fn finds_lazy_modules_and_unwraps_their_response() {
+        let page = r"parameters: 'action\x3DrefreshAjaxModule\x26modId\x3D_3_1\x26tabId\x3D_1_1\x26tab_tab_group_id\x3D_1_1',";
+        assert_eq!(ajax_modules(page), vec!["action=refreshAjaxModule&modId=_3_1&tabId=_1_1&tab_tab_group_id=_1_1".to_string()]);
+        let xml = "<?xml version=\"1.0\"?><contents><![CDATA[<ul class=\"courseListing\"><li><a href=\"/x\">A</a></li></ul>]]></contents>";
+        assert_eq!(module_contents(xml), "<ul class=\"courseListing\"><li><a href=\"/x\">A</a></li></ul>");
     }
 
     #[tokio::test]

@@ -114,7 +114,7 @@ pub fn clear_download_directory(dir: &Path, home: &Path) -> Result<usize, String
 }
 
 async fn reachable(url: &str) -> bool {
-    match reqwest::Client::builder().timeout(Duration::from_secs(8)).build() {
+    match reqwest::Client::builder().timeout(Duration::from_secs(20)).build() {
         Ok(client) => client.get(url).send().await.is_ok(),
         Err(_) => false,
     }
@@ -395,7 +395,7 @@ mod tests {
         let emit: Emit = Arc::new(move |name, _| sink.lock().unwrap().push(name.to_string()));
         let server = mock::start("G1", "pw");
         let pipeline = Arc::new(Pipeline::with_base_url(emit.clone(), app_paths(data), None, &server.base));
-        (Core { data_dir: data.to_path_buf(), pipeline, updater: Arc::new(Updater::new("2.0.0", Box::new(|_| {}))), emit, version: "2.0.0".into() }, server)
+        (Core { data_dir: data.to_path_buf(), pipeline, updater: Arc::new(Updater::new("2.0.1", Box::new(|_| {}))), emit, version: "2.0.1".into() }, server)
     }
 
     #[tokio::test]

@@ -147,7 +147,9 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
   const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' }) as WebGLRenderingContext | null;
 
   let mode: DotWaveMode = initialMode;
-  let active = FORCE_FOCUS || document.hasFocus();
+  // A freshly started window is not reliably reported as focused yet; start running and let the focus events pause it.
+  let active = true;
+  let drawn = false;
   let raf = 0;
   let tier = 0;
   let width = 1;
@@ -237,6 +239,7 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
   }
 
   function draw(time: number) {
+    drawn = true;
     if (useGl && gl) {
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.uniform1f(loc.u_t, time);
@@ -316,6 +319,7 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
     } else if (mode === 'reduced' || reduceMotion.matches) {
       draw(STATIC_TIME);
     }
+    else if (!drawn && mode === 'on') draw(clock());
     // Paused for focus/visibility: the canvas keeps its last frame, so nothing flashes.
   }
 
@@ -323,6 +327,9 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
     resize();
     if (!running() && mode !== 'off') draw(mode === 'on' ? clock() : STATIC_TIME);
   };
+  // The canvas can have no size yet when the window has only just opened.
+  const sizeWatch = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => onResize());
+  sizeWatch?.observe(canvas);
   const onVisibility = () => schedule();
   const onMove = (event: PointerEvent) => {
     tiltTarget = [((event.clientX / window.innerWidth) * 2 - 1) * 0.07, ((event.clientY / window.innerHeight) * 2 - 1) * -0.04];
@@ -351,6 +358,7 @@ export function createDotWave(canvas: HTMLCanvasElement, initialMode: DotWaveMod
         gl.getExtension('WEBGL_lose_context')?.loseContext();
         canvas.width = canvas.height = 1;
       }
+      sizeWatch?.disconnect();
       window.removeEventListener('resize', onResize);
       window.removeEventListener('pointermove', onMove);
       document.removeEventListener('visibilitychange', onVisibility);

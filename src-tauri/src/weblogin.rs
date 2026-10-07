@@ -10,8 +10,8 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use crate::pipeline::BrowserLogin;
 
 const LABEL: &str = "signin";
-const HIDDEN_TIMEOUT: Duration = Duration::from_secs(45);
-const VISIBLE_TIMEOUT: Duration = Duration::from_secs(240);
+const HIDDEN_TIMEOUT: Duration = Duration::from_secs(120);
+const VISIBLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Runs inside the Blackboard login page: fills the form, accepts the consent box and presses Login once.
 const FILL_SCRIPT: &str = r#"
@@ -35,7 +35,7 @@ const FILL_SCRIPT: &str = r#"
     return false;
   }
   var timer = setInterval(function () {
-    if (++ticks > 150) { clearInterval(timer); return; }
+    if (++ticks > 400) { clearInterval(timer); return; }
     var user = document.querySelector('#user_id'), pass = document.querySelector('#password'), go = document.querySelector('#entry-login');
     if (!user || !pass || !go) return;
     if (pressed) return;
@@ -47,6 +47,14 @@ const FILL_SCRIPT: &str = r#"
   }, 300);
 })();
 "#;
+
+struct CloseOnDrop(tauri::WebviewWindow);
+
+impl Drop for CloseOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.close();
+    }
+}
 
 fn script_for(username: &str, password: &str) -> String {
     FILL_SCRIPT.replace("__USER__", &serde_json::to_string(username).unwrap_or_default()).replace("__PASS__", &serde_json::to_string(password).unwrap_or_default())
@@ -73,6 +81,8 @@ async fn sign_in(app: AppHandle, site: String, username: String, password: Strin
         .build()
         .map_err(|e| format!("The sign-in window could not open: {e}"))?;
 
+    // Cancelling the sign-in drops this future; the window must not outlive it.
+    let _closer = CloseOnDrop(window.clone());
     let limit = if visible { VISIBLE_TIMEOUT } else { HIDDEN_TIMEOUT };
     let started = Instant::now();
     let result = loop {
@@ -89,7 +99,7 @@ async fn sign_in(app: AppHandle, site: String, username: String, password: Strin
         };
         let Ok(current) = window.url() else { continue };
         let on_login = current.path().to_lowercase().contains("/webapps/login");
-        if on_login || current.host_str() != base.host_str() || started.elapsed() < Duration::from_secs(2) {
+        if on_login || current.host_str() != base.host_str() || started.elapsed() < Duration::from_secs(1) {
             continue;
         }
         // Cookie access has to leave the UI thread, or the web view deadlocks.

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-10-07
+
+### Fixed
+- Sign-in no longer fails with "Blackboard could not be reached" on networks where the previous secure-connection library was rejected by the server; the app now uses Windows' own TLS.
+- Sign-in and download timeouts are longer, so slow browsers and slow connections can finish.
+- The app now waits up to a minute for Blackboard to show the course list after signing in instead of failing at once.
+- The background animation now starts right after launch even when the window is not focused yet.
+- Notices and error messages disappear after 3 seconds unless work is still in progress.
+- You can now cancel while signing in or scanning courses, and exit from the course and file lists back to the start screen.
+- The Headless / Visible switch glides smoothly instead of jumping.
+- Clear downloaded files now asks for confirmation in the app before deleting anything, and the "Cleared" message disappears after a few seconds.
+
 ## [2.0.0] - 2026-10-05
 
 ### Changed

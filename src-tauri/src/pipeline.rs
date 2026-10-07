@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::blackboard::{BbClient, LoginOutcome, BASE_URL};
+use crate::blackboard::{BbClient, LoginOutcome, BASE_URL, COURSE_WAIT};
 use crate::downloader::{Downloader, Emit, Outcome};
 use crate::export::{write_agent_export, write_manual_instructions, InstructionProgress};
 use crate::files::{extension_of, DownloadLayout};
@@ -104,7 +104,7 @@ impl Pipeline {
         }
         let client = BbClient::new(&self.base_url)?;
         let mut reason = String::new();
-        if !credentials.visible_browser {
+        if !credentials.visible_browser && std::env::var("BLACKBOX_FORCE_BROWSER").is_err() {
             match client.login(credentials.username.trim(), &credentials.password).await {
                 LoginOutcome::LoggedIn(html) => return Ok((client, html)),
                 LoginOutcome::Rejected => return Err("Login failed. Check your username and password, then retry.".into()),
@@ -116,12 +116,24 @@ impl Pipeline {
             return Err(if reason.is_empty() { "Blackboard sign-in needs a browser window.".into() } else { reason });
         };
         let cookies = browser_login(credentials.username.trim().to_string(), credentials.password.clone(), credentials.visible_browser).await?;
+        self.note(&format!("browser sign-in handed over cookies: {}", cookies.iter().map(|(n, v)| format!("{n}({}b)", v.len())).collect::<Vec<_>>().join(", ")));
         client.import_cookies(&cookies);
-        let portal = client.get_html(&format!("{}/", client.base_url())).await?;
-        if parse_courses(&portal, client.base_url()).is_empty() {
-            return Err("Login failed - could not find course list. Check your username and password, then retry.".into());
+        match client.wait_for_courses(COURSE_WAIT).await {
+            Some(portal) => Ok((client, portal)),
+            None => {
+                let seen = client.probe().await;
+                self.note(&seen);
+                Err("Signed in, but Blackboard did not show the course list in time. Wait a moment and retry.".into())
+            }
         }
-        Ok((client, portal))
+    }
+
+    /// A plain log line for diagnosing sign-in; never given credentials or cookie values.
+    fn note(&self, message: &str) {
+        use std::io::Write;
+        if let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(&self.paths.log_file) {
+            let _ = writeln!(out, "{} [info] {message}", crate::timeutil::iso_now());
+        }
     }
 
     fn begin(&self, owner: &'static str) -> Result<(), String> {
@@ -143,7 +155,12 @@ impl Pipeline {
         *self.cancel.lock().unwrap() = CancellationToken::new();
         self.begin("download")?;
         (self.emit)("login:start", json!({}));
-        let (client, portal_html) = match self.open(credentials).await {
+        let token = self.cancel.lock().unwrap().clone();
+        let opened = tokio::select! {
+            result = self.open(credentials) => result,
+            _ = token.cancelled() => Err("Cancelled.".to_string()),
+        };
+        let (client, portal_html) = match opened {
             Ok(opened) => opened,
             Err(error) => {
                 self.end();

@@ -286,7 +286,16 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('credentials');
   const [version, setVersion] = useState('');
   const [status, setStatus] = useState('');
+  const [confirmClear, setConfirmClear] = useState(false);
+  const abortedRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Errors are shown briefly; they stay in the log.
+  useEffect(() => {
+    if (!errorMessage) return undefined;
+    const timer = window.setTimeout(() => setErrorMessage(''), 3000);
+    return () => window.clearTimeout(timer);
+  }, [errorMessage]);
   const [isPreparingDownload, setIsPreparingDownload] = useState(false);
   const [isCancellingDownload, setIsCancellingDownload] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -348,13 +357,21 @@ export function App() {
   const [automationRun, setAutomationRun] = useState<AutomationRunView | null>(null);
   const [isAutomationRunning, setIsAutomationRunning] = useState(false);
 
+  // Notices vanish after a moment; only the status of work that is still running stays.
+  const workInProgress = isPreparingDownload || isCancellingDownload || isScanningCourses || isScanningBlockedCourses || isAutomationRunning;
+  useEffect(() => {
+    if (!status || workInProgress) return undefined;
+    const timer = window.setTimeout(() => setStatus(''), 3000);
+    return () => window.clearTimeout(timer);
+  }, [status, workInProgress]);
+
   const selectedRunUrlSetRef = useRef<Set<string>>(new Set());
   const selectedRunKnownByUrlRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     if (DEMO_MODE) {
       const demoDownloadDir = 'C:\\Users\\demo\\Downloads\\Blackbox';
-      setVersion('2.0.0');
+      setVersion('2.0.1');
       setConfig(previous => ({ ...previous, username: 'g12345678', password: 'blackboard-demo-password', downloadDir: demoDownloadDir, headless: true, autoCheckUpdates: true }));
       setSavedPassword('blackboard-demo-password');
       setPasswordStored(true);
@@ -558,7 +575,7 @@ export function App() {
 
   async function runWithUiError(action: () => Promise<void>): Promise<void> {
     setErrorMessage('');
-    try { await action(); } catch (error) { setStatus(''); setErrorMessage(toGuiErrorMessage(error)); }
+    try { await action(); } catch (error) { setStatus(''); if (!abortedRef.current) setErrorMessage(toGuiErrorMessage(error)); }
   }
 
   async function openDownloads() {
@@ -588,8 +605,12 @@ export function App() {
     await runWithUiError(async () => { const selected = await window.blackboxGui.chooseDownloadDirectory(); if (selected) { setConfig(previous => ({ ...previous, downloadDir: selected })); setStatus('Folder selected. Save settings to keep it.'); } });
   }
 
-  async function clearDownloads() {
-    if (!window.confirm('Clear every file and folder inside the configured download directory? This cannot be undone.')) return;
+  function clearDownloads() {
+    setConfirmClear(true);
+  }
+
+  async function performClearDownloads() {
+    setConfirmClear(false);
     await runWithUiError(async () => {
       setStatus('Clearing downloaded files...');
       let removed = 0;
@@ -678,6 +699,7 @@ export function App() {
 
   async function startFlow() {
     if (isPreparingDownload) return;
+    abortedRef.current = false;
     setActiveView('download'); setErrorMessage('');
     if (DEMO_MODE) { await runDemoPreparation(); return; }
     setIsPreparingDownload(true); setStage('ready'); setPreparationProgress({ completed: 0, total: 3, label: 'Connecting to Blackboard' });
@@ -693,7 +715,9 @@ export function App() {
       setStatus('Connecting to Blackboard and loading your course list...');
       await window.blackboxGui.workflowStart({ username: config.username || undefined, password: useStoredPassword ? undefined : config.password || undefined, downloadDir: config.downloadDir, headless: config.headless });
       setPreparationProgress({ completed: 1, total: 3, label: 'Loading your course list' });
+      if (abortedRef.current) return;
       const discovered = await window.blackboxGui.discoverCourses();
+      if (abortedRef.current) return;
       setCourses(discovered); setSelectedCourseIds(new Set(discovered.map(course => course.id))); setSelectedInstructionCourseIds(new Set()); setPreparationProgress({ completed: 3, total: 3, label: 'Course list ready' }); setStage('courses'); setStatus('');
     });
     setIsPreparingDownload(false); setPreparationProgress(null);
@@ -721,12 +745,14 @@ export function App() {
 
   async function runScanFiles() {
     if (selectedCourses.length === 0 || isScanningCourses) return;
+    abortedRef.current = false;
     setActiveView('download'); setIsScanningCourses(true); setErrorMessage('');
     if (DEMO_MODE) { await runDemoScan(); return; }
     await runWithUiError(async () => {
       try {
         setDiscoveryProgress({ phase: 'courses', completed: 0, total: selectedCourses.length, filesFound: 0 }); setStatus('Scanning selected courses for files...');
         const result = (await window.blackboxGui.discoverFiles(selectedCourses)) as { files: DiscoveredFile[]; existing?: Record<string, ExistingFileState> };
+        if (abortedRef.current) return;
         const existing = result.existing || {};
         setFiles(result.files);
         setExistingByUrl(existing);
@@ -847,6 +873,16 @@ export function App() {
       setIsCancellingDownload(false);
       setErrorMessage(toGuiErrorMessage(error));
     }
+  }
+
+  /** Abort before the transfer starts (signing in, loading or scanning courses) and return to the start screen. */
+  async function exitWorkflow() {
+    abortedRef.current = true;
+    setIsPreparingDownload(false); setPreparationProgress(null); setIsScanningCourses(false); setDiscoveryProgress(null);
+    setCourses([]); setSelectedCourseIds(new Set()); setSelectedInstructionCourseIds(new Set()); setFiles([]); setSelectedFileUrls(new Set()); setKnownByUrl(new Map()); setSummary(null);
+    setStage('ready'); setStatus('Cancelled.');
+    if (DEMO_MODE || !window.blackboxGui) return;
+    try { await window.blackboxGui.cancelDownload(); await window.blackboxGui.cleanupWorkflow(); } catch { /* nothing was running */ }
   }
 
   async function saveSettings(testLogin: boolean) {
@@ -1070,11 +1106,23 @@ export function App() {
       <main className="stage">
         <WorkspaceHeading active={activeView} credentials={hasCredentials} version={version} demo={DEMO_MODE} />
         <Scene identity={activeView === 'download' ? `download:${stage}:${isPreparingDownload}` : activeView === 'settings' ? `settings:${settingsSection}` : activeView === 'automation' ? `automation:${automationTab}` : activeView} >
+        {confirmClear && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" data-testid="clear-downloads-modal" onClick={() => setConfirmClear(false)}>
+            <Surface className="modal-card panel" onClick={event => event.stopPropagation()}>
+              <div className="surface-intro"><div><h2>Clear downloaded files?</h2><p>Every file and folder inside the configured download directory will be deleted. This cannot be undone.</p></div></div>
+              <span className="field-help mono">{paths.downloads || config.downloadDir}</span>
+              <div className="btn-row">
+                <Action className="btn-danger" data-testid="clear-downloads-confirm" onClick={performClearDownloads}><Icon name="x" size={16} /> Clear files</Action>
+                <Action className="btn-ghost" autoFocus onClick={() => setConfirmClear(false)}>Cancel</Action>
+              </div>
+            </Surface>
+          </div>
+        )}
         {showGlobalStatus && <div className="banner banner-info" role="status"><Icon name="info" size={16} /><span>{status}</span></div>}
         {errorMessage && <div className="banner banner-error" role="alert"><Icon name="alert" size={17} /><span><strong>Something went wrong</strong>{errorMessage}</span></div>}
         {activeView === 'settings' && settingsSection === 'diagnostics' && diagnosticsProgress && <div className="diagnostics-progress-top" data-testid="diagnostics-progress"><ProgressBar label={diagnosticsProgress.running ? (diagnosticsProgress.loginTest ? 'Running diagnostics and login test' : 'Running diagnostics') : 'Diagnostics complete'} value={diagnosticsPercent} detail={`${diagnosticsProgress.completed} / ${diagnosticsProgress.total}`} subdetail={diagnosticsProgress.current} /></div>}
 
-        {activeView === 'download' && stage === 'ready' && isPreparingDownload && <section className="view download-launch" aria-live="polite" data-testid="download-launch"><Surface className="panel launch-panel"><div className="launch-hero"><div className="launch-visual"><div className="launch-orbit"><AppIcon /></div></div><div className="launch-copy"><h2>Preparing your course list</h2><p>{status || 'Connecting to Blackboard and loading the courses available to you.'}</p></div></div><ProgressBar label={preparationProgress?.label || 'Starting'} value={preparationProgress ? (preparationProgress.completed / preparationProgress.total) * 100 : 8} indeterminate={!preparationProgress} detail={preparationProgress ? `${preparationProgress.completed} of ${preparationProgress.total}` : 'Working'} /><div className="launch-stages">{['Connect', 'Discover courses', 'Choose files'].map((label, index) => { const progress = preparationProgress?.completed || 0; const state = progress > index ? 'done' : progress === index ? 'current' : 'todo'; return <div key={label} className={`launch-stage is-${state}`}><span className="stage-number">{state === 'done' ? <Icon name="check" size={14} /> : index + 1}</span><span>{label}</span></div>; })}</div></Surface></section>}
+        {activeView === 'download' && stage === 'ready' && isPreparingDownload && <section className="view download-launch" aria-live="polite" data-testid="download-launch"><Surface className="panel launch-panel"><div className="launch-hero"><div className="launch-visual"><div className="launch-orbit"><AppIcon /></div></div><div className="launch-copy"><h2>Preparing your course list</h2><p>{status || 'Connecting to Blackboard and loading the courses available to you.'}</p></div></div><ProgressBar label={preparationProgress?.label || 'Starting'} value={preparationProgress ? (preparationProgress.completed / preparationProgress.total) * 100 : 8} indeterminate={!preparationProgress} detail={preparationProgress ? `${preparationProgress.completed} of ${preparationProgress.total}` : 'Working'} /><div className="launch-stages">{['Connect', 'Discover courses', 'Choose files'].map((label, index) => { const progress = preparationProgress?.completed || 0; const state = progress > index ? 'done' : progress === index ? 'current' : 'todo'; return <div key={label} className={`launch-stage is-${state}`}><span className="stage-number">{state === 'done' ? <Icon name="check" size={14} /> : index + 1}</span><span>{label}</span></div>; })}</div><div className="btn-row"><Action className="btn-ghost" data-testid="prepare-cancel" onClick={exitWorkflow}><Icon name="x" size={16} /> Cancel</Action></div></Surface></section>}
 
         {activeView === 'download' && stage === 'ready' && !isPreparingDownload && <section className="view"><Surface className="panel ready-panel"><div className="ready-main"><span className="ready-icon"><Icon name="download" size={24} /></span><div><h2>Ready to download</h2><p>Choose courses, review files, and save documents to your configured folder.</p></div></div><div className="ready-actions"><Action className="btn-primary btn-lg" onClick={hasCredentials ? beginDownload : () => { setActiveView('settings'); setSettingsSection('credentials'); }}><Icon name={hasCredentials ? 'download' : 'key'} size={17} />{hasCredentials ? 'Start a download' : 'Open credentials'}</Action><Action className="btn-ghost" onClick={openDownloads}><Icon name="folder" size={17} /> Open downloads</Action><Action className="btn-danger" onClick={clearDownloads}><Icon name="x" size={17} /> Clear downloaded files</Action></div><dl className="ready-meta"><div><dt>Access</dt><dd>{hasCredentials ? 'Credentials ready' : 'Credentials required'}</dd></div><div><dt>Save to</dt><dd className="mono">{paths.downloads || config.downloadDir || '...'}</dd></div></dl></Surface></section>}
 
@@ -1221,8 +1269,8 @@ export function App() {
 </section>}
 
 
-        {activeView === 'download' && (stage === 'courses' || stage === 'files' || stage === 'download' || stage === 'summary') && <section className="view download-view"><div className="download-stepper-row"><Stepper current={wizardStepIndex(stage)} />{stage !== 'download' && <Action className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</Action>}</div>
-          {stage === 'courses' && <Surface className="panel selection-panel" data-testid="course-list-panel"><div className="selection-head"><div><h2>Choose courses</h2><p>Select the courses to scan for files.</p></div><CountSummary items={[`${visibleCourses.length} shown`, `${selectedCourseIds.size} selected`, `${courses.length} total`]} /></div>{isScanningCourses && discoveryProgress && <ProgressBar label={discoveryProgress.phase === 'metadata' ? 'Reading file details' : 'Scanning course content'} value={discoveryPercent} detail={`${discoveryProgress.completed} / ${discoveryProgress.total}`} subdetail={discoveryProgress.currentSection || discoveryProgress.currentCourse || 'Working through the selected courses'} dataTestId="discovery-progress" />}<div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter courses" value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label><div className="btn-row btn-row-inline"><Action className="btn-secondary" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set(courses.map(course => course.id)))}><Icon name="check-square" size={16} /> Select all</Action><Action className="btn-ghost" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set())}><Icon name="x" size={16} /> Clear</Action><Action className="btn-primary" disabled={selectedCourses.length === 0 || isScanningCourses} onClick={runScanFiles}><Icon name="scan" size={16} className={isScanningCourses ? 'is-spinning' : ''} /> {isScanningCourses ? 'Scanning...' : 'Scan selected'}</Action></div></div><div className="list" aria-busy={isScanningCourses}>{visibleCourses.map((course, index) => { const selected = selectedCourseIds.has(course.id); return <label key={course.id} className={`list-row ${selected ? 'is-selected' : ''}`} title={course.name}><input type="checkbox" checked={selected} disabled={isScanningCourses} onChange={event => setSelectedCourseIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(course.id); else next.delete(course.id); return next; })} /><span className="list-index">{String(index + 1).padStart(2, '0')}</span><span className="list-name">{course.name}</span><span className={`list-state ${selected ? 'is-on' : ''}`}>{selected ? 'Selected' : 'Skipped'}</span></label>; })}{visibleCourses.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No courses found</strong><span>{courses.length ? 'Try a different search.' : 'Start a download to discover courses.'}</span></div>}</div></Surface>}
+        {activeView === 'download' && (stage === 'courses' || stage === 'files' || stage === 'download' || stage === 'summary') && <section className="view download-view"><div className="download-stepper-row"><Stepper current={wizardStepIndex(stage)} />{(stage === 'courses' || stage === 'files') && <Action className="btn-ghost btn-compact" data-testid="exit-workflow" onClick={exitWorkflow}><Icon name="x" size={15} /> Exit</Action>}{stage !== 'download' && <Action className="btn-danger btn-compact" onClick={clearDownloads}><Icon name="x" size={15} /> Clear downloaded files</Action>}</div>
+          {stage === 'courses' && <Surface className="panel selection-panel" data-testid="course-list-panel"><div className="selection-head"><div><h2>Choose courses</h2><p>Select the courses to scan for files.</p></div><CountSummary items={[`${visibleCourses.length} shown`, `${selectedCourseIds.size} selected`, `${courses.length} total`]} /></div>{isScanningCourses && discoveryProgress && <ProgressBar label={discoveryProgress.phase === 'metadata' ? 'Reading file details' : 'Scanning course content'} value={discoveryPercent} detail={`${discoveryProgress.completed} / ${discoveryProgress.total}`} subdetail={discoveryProgress.currentSection || discoveryProgress.currentCourse || 'Working through the selected courses'} dataTestId="discovery-progress" />}<div className="toolbar"><label className="search-field"><Icon name="search" size={16} /><input className="search" placeholder="Filter courses" value={courseSearch} onChange={event => setCourseSearch(event.target.value)} /></label><div className="btn-row btn-row-inline"><Action className="btn-secondary" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set(courses.map(course => course.id)))}><Icon name="check-square" size={16} /> Select all</Action><Action className="btn-ghost" disabled={isScanningCourses} onClick={() => setSelectedCourseIds(new Set())}><Icon name="x" size={16} /> Clear</Action><Action className="btn-primary" disabled={selectedCourses.length === 0 || isScanningCourses} onClick={runScanFiles}><Icon name="scan" size={16} className={isScanningCourses ? 'is-spinning' : ''} /> {isScanningCourses ? 'Scanning...' : 'Scan selected'}</Action>{isScanningCourses && <Action className="btn-danger" data-testid="scan-cancel" onClick={exitWorkflow}><Icon name="x" size={16} /> Cancel</Action>}</div></div><div className="list" aria-busy={isScanningCourses}>{visibleCourses.map((course, index) => { const selected = selectedCourseIds.has(course.id); return <label key={course.id} className={`list-row ${selected ? 'is-selected' : ''}`} title={course.name}><input type="checkbox" checked={selected} disabled={isScanningCourses} onChange={event => setSelectedCourseIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(course.id); else next.delete(course.id); return next; })} /><span className="list-index">{String(index + 1).padStart(2, '0')}</span><span className="list-name">{course.name}</span><span className={`list-state ${selected ? 'is-on' : ''}`}>{selected ? 'Selected' : 'Skipped'}</span></label>; })}{visibleCourses.length === 0 && <div className="empty-state"><Icon name="search-x" size={23} /><strong>No courses found</strong><span>{courses.length ? 'Try a different search.' : 'Start a download to discover courses.'}</span></div>}</div></Surface>}
 
           {stage === 'files' && (
             <Surface className="panel selection-panel files-panel" data-testid="file-list-panel">
@@ -1393,6 +1441,7 @@ function BrowserModeSlider({ headless, onChange }: { headless: boolean; onChange
   const sliderRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState(headless ? 0 : 100);
   const [dragging, setDragging] = useState(false);
+  const pressedAt = useRef<number | null>(null);
   const [width, setWidth] = useState(0);
 
   useEffect(() => {
@@ -1424,16 +1473,21 @@ function BrowserModeSlider({ headless, onChange }: { headless: boolean; onChange
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    setDragging(true);
+    pressedAt.current = event.clientX;
     updateFromClientX(event.clientX);
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (dragging) updateFromClientX(event.clientX);
+    if (pressedAt.current === null) return;
+    // A plain click glides to its side; only a real drag follows the pointer without easing.
+    if (!dragging && Math.abs(event.clientX - pressedAt.current) < 4) return;
+    if (!dragging) setDragging(true);
+    updateFromClientX(event.clientX);
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragging) return;
+    if (pressedAt.current === null) return;
+    pressedAt.current = null;
     const finalPosition = positionFromClientX(event.clientX);
     const finalHeadless = finalPosition < 50;
     onChange(finalHeadless);
@@ -1460,8 +1514,8 @@ function BrowserModeSlider({ headless, onChange }: { headless: boolean; onChange
   const thumbLeft = width > 0 ? (activeLeft || sliderInset) + segmentWidth - thumbSize - thumbGap : undefined;
 
   return <div className="browser-mode-control">
-    <div ref={sliderRef} className="mode-slider" data-mode={headless ? 'headless' : 'visible'} data-dragging={dragging ? 'true' : 'false'} role="slider" tabIndex={0} aria-labelledby="browser-mode-label" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(position)} aria-valuetext={headless ? 'Headless, default' : 'Visible browser'} aria-orientation="horizontal" onKeyDown={handleKeyDown} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={() => setDragging(false)}>
-      <span className="mode-slider-track" aria-hidden="true"><span className="mode-slider-active" style={activeLeft === undefined ? undefined : { transform: `translateX(${activeLeft - sliderInset}px)`, width: `${segmentWidth}px` }} /><span className="mode-slider-thumb" style={thumbLeft === undefined ? undefined : { left: `${thumbLeft}px` }}><Icon name={headless ? 'monitor' : 'eye'} size={14} /></span></span>
+    <div ref={sliderRef} className="mode-slider" data-mode={headless ? 'headless' : 'visible'} data-dragging={dragging ? 'true' : 'false'} role="slider" tabIndex={0} aria-labelledby="browser-mode-label" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(position)} aria-valuetext={headless ? 'Headless, default' : 'Visible browser'} aria-orientation="horizontal" onKeyDown={handleKeyDown} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={() => { pressedAt.current = null; setDragging(false); }}>
+      <span className="mode-slider-track" aria-hidden="true"><span className="mode-slider-active" style={{ '--pos': position } as React.CSSProperties} /><span className="mode-slider-thumb" style={thumbLeft === undefined ? undefined : { left: `${thumbLeft}px` }}><Icon name={headless ? 'monitor' : 'eye'} size={14} /></span></span>
       <span className={`mode-option mode-option-headless ${headless ? 'is-active' : ''}`}><Icon name="monitor" size={14} /><span>Headless <small>(default)</small></span></span>
       <span className={`mode-option mode-option-visible ${headless ? '' : 'is-active'}`}><Icon name="eye" size={14} /><span>Visible</span></span>
     </div>
