@@ -1,42 +1,49 @@
-# Blackbox — BlackboardChina Downloader
+# Blackbox
 
-Blackbox is a Windows desktop app that discovers your BlackboardChina courses and supported documents, then saves the ones you select locally. It does not submit coursework or change Blackboard data.
+A small Windows app that downloads your course documents from BlackboardChina. Pick courses, pick files, save them. It only reads Blackboard; it never submits coursework or changes anything.
 
-This application is provided solely for educational, personal, and technical purposes. By using this application, you acknowledge and agree that you are solely responsible for ensuring that your use complies with all applicable SHSID policies, platform terms, laws, and regulations.
-
-The developer does not endorse, encourage, or authorize any misuse of this application, including any use that violates school policies, platform rules, or legal requirements. To the maximum extent permitted by applicable law, the developer disclaims all responsibility and liability for any misuse of the application, any violation committed by users, and any direct or indirect consequences resulting from such use.
+![Choose files](docs/screenshots/files.png)
 
 ## Install
 
-Download `Blackbox-<version>-x64.exe` from [GitHub Releases](https://github.com/Panther114/blackbox/releases), run it, then save your BlackboardChina credentials in **Settings**. Blackbox drives the Microsoft Edge that ships with Windows, so no separate browser is bundled. Windows 11 gets a native Mica window material; earlier builds fall back to a solid dark surface.
+1. Download `Blackbox_<version>_x64-setup.exe` from [GitHub Releases](https://github.com/Panther114/blackbox/releases) and run it (about 2 MB).
+2. Open **Settings → Credentials**, enter your username and password, choose a download folder and save. The password is kept in the Windows secure store.
 
-## Using the app
+Requires Windows 10 or 11 (WebView2, included with Windows).
 
-- **Downloads** — pick courses, review files, optionally include each course's readable instructions and text, then save. Choose *Course folders* (Blackboard's structure) or *Flat files* (everything in the course folder); both can coexist and never overwrite each other. Files the chosen layout already holds are marked *Saved* and skipped.
-- **Automation** — batch downloading with its own settings, folder and run log.
-- **Agent Skills** — read-only export of course instructions and attachments for coding agents, plus an optional harness skill in `~/.agents/skills`.
-- **Settings** — credentials (the password is kept in the Windows secure store), course filters, diagnostics and updates.
+## Use
 
-Only these document types are saved: `pdf`, `ppt`, `pptx`, `doc`, `docx`, `xls`, `xlsx`. Archives, images, media, text and data files are rejected even when the server claims a document MIME type.
+1. **Downloads → Start a download** signs in and lists your courses.
+2. Select courses and **Scan selected**. Cancel or **Exit** at any point before the transfer starts.
+3. Choose files, optionally include each course's text (saved as Markdown), pick **Course folders** or **Flat files**, and download. **Cancel download** stops it and keeps what is already saved.
 
-After each run:
+| Choose courses | Download |
+| --- | --- |
+| ![Courses](docs/screenshots/courses.png) | ![Download](docs/screenshots/download.png) |
 
-- `logs/latest-summary.txt` and `logs/blackbox.log` in the app data folder (open them from the footer).
-- `<download folder>/blackbox-run-report.json`.
+Files already saved in the chosen layout are marked *Saved* and skipped. Only `pdf`, `ppt(x)`, `doc(x)` and `xls(x)` are saved; archives, images, media and other types are rejected.
+
+Other tabs: **Agent Skills** exports course text and attachments read-only for coding agents. **Settings** has course filters, diagnostics and updates.
+
+![Settings](docs/screenshots/credentials.png)
+
+**Headless** (default) signs in without a window. If sign-in fails, switch to **Visible** to watch what Blackboard asks for.
+
+After each run, find `logs/blackbox.log` and `logs/latest-summary.txt` (open them from the footer) and `blackbox-run-report.json` in your download folder. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common problems.
 
 ## Development
 
-Requires Node.js 22 or 24.
+Requires Node.js 22+, Rust, and the Windows WebView2 runtime.
 
 ```bash
 npm install
-npm run build:gui      # compile the main process and renderer
-npm run gui            # launch the built app
-npm run gui:demo       # renderer dev server with offline demo data (http://127.0.0.1:5173/?demo=1)
-npm test               # unit tests
-npm run build:app      # Windows installer in release/
+npm test                  # unit tests
+(cd src-tauri && cargo test --lib)
+npm run tauri:build       # NSIS installer in src-tauri/target/release/bundle/nsis
 ```
 
-The demo accepts `screen=` states (`courses`, `scan`, `metadata`, `files`, `download`, `summary`, `credentials`, `diagnostics`, `blocked-courses`, `updates`, `agent`, `automation`) that use local fixture data only. For a hidden-window screenshot of the real app, run `electron dist/gui/main.js --demo --screen=files --no-material --capture=out.png --size=1120x760`.
+Screenshots use offline fixture data: `node scripts/tauri-capture.mjs <blackbox.exe> <screen> out.png 1120x760` (screens such as `courses`, `files`, `download`, `credentials`). Releases are built by GitHub Actions when a `v*` tag is pushed; see [CHANGELOG.md](CHANGELOG.md).
 
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common problems.
+## Disclaimer
+
+Provided for educational, personal and technical purposes only. You are solely responsible for making sure your use complies with SHSID policies, platform terms and applicable law. The developer does not endorse or authorize misuse and disclaims all liability for it and its consequences, to the maximum extent permitted by law.
