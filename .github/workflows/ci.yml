@@ -22,3 +22,26 @@ jobs:
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test --lib
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm ci
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib
+      - name: Bundle (universal)
+        run: npm run tauri:build -- --target universal-apple-darwin --bundles app,dmg
+      - name: Verify bundle
+        run: |
+          app=src-tauri/target/universal-apple-darwin/release/bundle/macos/Blackbox.app
+          lipo -archs "$app/Contents/MacOS/blackbox"
+          codesign --verify --deep --strict "$app"

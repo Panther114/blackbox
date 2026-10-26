@@ -42,8 +42,20 @@ pub fn is_newer(current: &str, candidate: &str) -> bool {
 fn pick_installer(assets: Vec<Asset>) -> Option<Asset> {
     assets.into_iter().find(|a| {
         let name = a.name.to_lowercase();
-        name.ends_with(".exe") && name.contains("setup") || name.ends_with("-x64.exe")
+        if cfg!(target_os = "macos") {
+            name.ends_with(".dmg")
+        } else {
+            name.ends_with(".exe") && name.contains("setup") || name.ends_with("-x64.exe")
+        }
     })
+}
+
+fn installer_file() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "blackbox-update.dmg"
+    } else {
+        "blackbox-update-setup.exe"
+    }
 }
 
 pub struct Updater {
@@ -94,7 +106,7 @@ impl Updater {
         }
         let version = release.tag_name.trim_start_matches(['v', 'V']).to_string();
         let Some(asset) = pick_installer(release.assets) else {
-            return self.set(json!({ "status": "error", "message": "The newest release has no Windows installer attached." }));
+            return self.set(json!({ "status": "error", "message": "The newest release has no installer for this system attached." }));
         };
         *self.pending.lock().unwrap() = Some((asset.browser_download_url, asset.digest));
         self.set(json!({ "status": "available", "version": version, "notes": release.body }))
@@ -117,7 +129,7 @@ impl Updater {
     async fn fetch(&self, url: &str, digest: Option<&str>, version: &Value) -> Result<PathBuf, String> {
         let response = reqwest::Client::builder().user_agent("Blackbox-updater").build().map_err(|e| e.to_string())?.get(url).send().await.and_then(|r| r.error_for_status()).map_err(|e| format!("Update download failed: {e}"))?;
         let total = response.content_length().unwrap_or(0);
-        let path = std::env::temp_dir().join("blackbox-update-setup.exe");
+        let path = std::env::temp_dir().join(installer_file());
         let mut file = tokio::fs::File::create(&path).await.map_err(|e| e.to_string())?;
         let mut hasher = Sha256::new();
         let (mut got, mut last_percent) = (0u64, 0u64);
@@ -149,7 +161,14 @@ impl Updater {
     /// Start the downloaded installer; the caller then exits the app so the installer can replace it.
     pub fn install(&self) -> Result<(), String> {
         let path = self.installer.lock().unwrap().clone().ok_or("No downloaded update is ready to install.")?;
-        std::process::Command::new(path).args(["/P", "/R", "/UPDATE"]).spawn().map_err(|e| format!("The installer could not start: {e}"))?;
+        // macOS mounts the disk image so the app can be dragged over the old one; Windows runs the installer silently.
+        let mut command = if cfg!(target_os = "macos") { std::process::Command::new("open") } else { std::process::Command::new(&path) };
+        if cfg!(target_os = "macos") {
+            command.arg(&path);
+        } else {
+            command.args(["/P", "/R", "/UPDATE"]);
+        }
+        command.spawn().map_err(|e| format!("The installer could not start: {e}"))?;
         Ok(())
     }
 }
@@ -165,10 +184,19 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "macos"))]
     fn picks_the_windows_installer() {
         let asset = |name: &str| Asset { name: name.into(), browser_download_url: format!("https://x/{name}"), digest: None };
         let picked = pick_installer(vec![asset("latest.yml"), asset("Blackbox_2.1.0_x64-setup.exe"), asset("notes.txt")]).unwrap();
         assert_eq!(picked.name, "Blackbox_2.1.0_x64-setup.exe");
         assert!(pick_installer(vec![asset("source.zip")]).is_none());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn picks_the_disk_image() {
+        let asset = |name: &str| Asset { name: name.into(), browser_download_url: format!("https://x/{name}"), digest: None };
+        let picked = pick_installer(vec![asset("Blackbox_2.1.0_x64-setup.exe"), asset("Blackbox_2.1.0_universal.dmg")]).unwrap();
+        assert_eq!(picked.name, "Blackbox_2.1.0_universal.dmg");
     }
 }

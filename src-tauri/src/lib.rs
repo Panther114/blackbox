@@ -37,13 +37,18 @@ struct Shell {
 }
 
 fn data_dir() -> PathBuf {
-    PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".into())).join("blackbox").join("data")
+    #[cfg(target_os = "macos")]
+    let base = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join("Library").join("Application Support");
+    #[cfg(not(target_os = "macos"))]
+    let base = PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".into()));
+    base.join("blackbox").join("data")
 }
 
-/// Open a folder in Explorer, creating it first so "Open downloads" never fails on a fresh install.
+/// Open a folder in the system file manager (Explorer or Finder), creating it first so "Open downloads" never fails on a fresh install.
 fn open_folder(path: &Path) -> Result<Value, String> {
     std::fs::create_dir_all(path).map_err(|e| format!("The folder could not be created: {e}"))?;
-    std::process::Command::new("explorer.exe").arg(path).spawn().map_err(|e| format!("Explorer could not open the folder: {e}"))?;
+    let opener = if cfg!(target_os = "macos") { "open" } else { "explorer.exe" };
+    std::process::Command::new(opener).arg(path).spawn().map_err(|e| format!("The folder could not be opened: {e}"))?;
     Ok(json!(""))
 }
 
@@ -144,7 +149,7 @@ pub fn run() {
                 let _ = window.set_icon(icon);
             }
             // Mica needs Windows 11 22H2+; older builds report an error and keep the flat dark ground.
-            let mica = window.set_effects(EffectsBuilder::new().effect(Effect::Mica).build()).is_ok();
+            let mica = cfg!(windows) && window.set_effects(EffectsBuilder::new().effect(Effect::Mica).build()).is_ok();
             app.manage(Shell { material: if mica { "mica" } else { "none" } });
             let core = build_core(app.handle());
             schedule_update_checks(core.clone());

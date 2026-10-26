@@ -35,14 +35,61 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib
       - run: npm run tauri:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: src-tauri/target/release/bundle/nsis/Blackbox_*_x64-setup.exe
+          if-no-files-found: error
+  macos:
+    name: macOS universal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm ci
+      - run: npm test
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib
+      - run: npm run tauri:build -- --target universal-apple-darwin --bundles app,dmg
+      - name: Verify bundle
+        run: |
+          app=src-tauri/target/universal-apple-darwin/release/bundle/macos/Blackbox.app
+          lipo -archs "$app/Contents/MacOS/blackbox"
+          codesign --verify --deep --strict "$app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/Blackbox_*_universal.dmg
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
       - name: Publish release
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes=".github/notes/${RELEASE_TAG}.md"
           test -f "$notes" || { echo "Missing $notes: write the release notes for this version first."; exit 1; }
-          cd src-tauri/target/release/bundle/nsis
-          sha256sum Blackbox_*_x64-setup.exe > SHA256SUMS.txt
+          cd assets
+          sha256sum Blackbox_* > SHA256SUMS.txt
           cd -
-          gh release create "${RELEASE_TAG}" src-tauri/target/release/bundle/nsis/Blackbox_*_x64-setup.exe src-tauri/target/release/bundle/nsis/SHA256SUMS.txt             --repo "${GITHUB_REPOSITORY}" --verify-tag --title "Blackbox ${RELEASE_TAG}" --notes-file "$notes"
+          gh release create "${RELEASE_TAG}" assets/Blackbox_* assets/SHA256SUMS.txt --repo "${GITHUB_REPOSITORY}" --verify-tag --title "Blackbox ${RELEASE_TAG}" --notes-file "$notes"

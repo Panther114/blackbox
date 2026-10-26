@@ -43,3 +43,6 @@ strip = true
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+
+[target."cfg(target_os = \"macos\")".dependencies]
+security-framework = "3"

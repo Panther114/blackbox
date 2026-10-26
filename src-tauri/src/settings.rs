@@ -1,5 +1,5 @@
 //! User settings (settings.json, compatible with the Electron build) and the
-//! password store (Windows DPAPI).
+//! password store (Windows DPAPI, macOS Keychain).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -130,16 +130,39 @@ mod dpapi {
         }
         Ok(take(out))
     }
+
+    pub fn forget() {}
 }
 
-#[cfg(not(windows))]
+/// macOS: the secret lives in the login Keychain; the file on disk is only a marker that one is stored.
+#[cfg(target_os = "macos")]
 mod dpapi {
-    pub fn protect(_: &[u8]) -> Result<Vec<u8>, String> {
-        Err("Secure password storage is only available on Windows.".into())
+    use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
+
+    const SERVICE: &str = "com.panther114.blackbox";
+    const ACCOUNT: &str = "blackboard-password";
+
+    pub fn protect(plain: &[u8]) -> Result<Vec<u8>, String> {
+        set_generic_password(SERVICE, ACCOUNT, plain).map_err(|e| format!("The macOS Keychain could not store the password: {e}"))?;
+        Ok(b"keychain".to_vec())
     }
     pub fn unprotect(_: &[u8]) -> Result<Vec<u8>, String> {
-        Err("Secure password storage is only available on Windows.".into())
+        get_generic_password(SERVICE, ACCOUNT).map_err(|_| "The saved password could not be read from the Keychain.".to_string())
     }
+    pub fn forget() {
+        let _ = delete_generic_password(SERVICE, ACCOUNT);
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+mod dpapi {
+    pub fn protect(_: &[u8]) -> Result<Vec<u8>, String> {
+        Err("Secure password storage is only available on Windows and macOS.".into())
+    }
+    pub fn unprotect(_: &[u8]) -> Result<Vec<u8>, String> {
+        Err("Secure password storage is only available on Windows and macOS.".into())
+    }
+    pub fn forget() {}
 }
 
 pub struct PasswordStore {
@@ -168,6 +191,7 @@ impl PasswordStore {
     }
 
     pub fn clear(&self) {
+        dpapi::forget();
         let _ = fs::remove_file(&self.file);
     }
 }

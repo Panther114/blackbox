@@ -4,7 +4,8 @@ import { isTauri } from '../bridge';
 
 /** Caption buttons for the frameless Tauri window. Electron draws its own, so this renders nothing there. */
 export function WindowControls() {
-  if (!isTauri) return null;
+  // macOS keeps its native traffic-light title bar.
+  if (!isTauri || /Mac/i.test(navigator.platform)) return null;
   const win = getCurrentWindow();
   return (
     <div className="window-controls">
