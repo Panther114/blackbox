@@ -406,12 +406,12 @@ mod tests {
         assert_eq!(saved["ok"], true);
         let loaded = core.call("loadConfig", &[]).await.unwrap();
         assert_eq!((loaded["username"].as_str(), loaded["downloadDir"].as_str(), loaded["headless"].as_bool()), (Some("G1"), Some("D:/dl"), Some(false)));
-        assert_eq!(loaded["hasCredentials"], cfg!(windows));
+        assert_eq!(loaded["hasCredentials"], cfg!(any(windows, target_os = "macos")));
 
         // No password key keeps the stored one; an empty one clears it; an empty filter can be cleared.
         core.call("saveSetup", &[json!({ "username": "G1", "courseFilter": "" })]).await.unwrap();
         assert_eq!(core.call("loadConfig", &[]).await.unwrap()["courseFilter"], "");
-        assert_eq!(core.passwords().exists(), cfg!(windows));
+        assert_eq!(core.passwords().exists(), cfg!(any(windows, target_os = "macos")));
         core.call("saveSetup", &[json!({ "username": "G1", "password": "" })]).await.unwrap();
         assert!(!core.passwords().exists());
     }
